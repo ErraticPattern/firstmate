@@ -85,6 +85,7 @@ While Calm is active, the adapter passes a shallow thinking-free presentation co
 Calm never writes that setting, so each row renders with the captain's own value again as soon as Calm is off.
 The persisted assistant message, provider context, tool execution, and export data remain unchanged.
 Thinking-only assistant messages now render zero rows, thinking before visible assistant text adds no spacing beyond the text-only baseline, and Pi's thinking toggle cannot reveal reasoning while Calm is on.
+A separate API-probed adapter on `InteractiveMode.toggleThinkingBlockVisibility`, verified on Pi 0.85.1, keeps that toggle saving the captain's setting but relabels its confirmation while Calm is on to say the new state applies once Calm is off.
 
 The disconfirming checks deliberately retain supported boundaries.
 An arbitrary third-party custom tool and a built-in read image remain visible because Pi exposes neither a global tool renderer nor image-row control.

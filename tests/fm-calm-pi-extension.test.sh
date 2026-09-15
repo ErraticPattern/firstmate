@@ -408,6 +408,7 @@ const operational = await import("./.pi/extensions/lib/fm-calm-operational-user-
 
 for (const [name, install, expected] of [
   ["collapsed-thinking", assistant.installCalmAssistantLayout, "AssistantMessageComponent"],
+  ["thinking-toggle", assistant.installCalmThinkingToggleLabel, "InteractiveMode"],
   ["operational-user-row", operational.installCalmOperationalUserLayout, "InteractiveMode"],
 ]) {
   let reason;
@@ -1367,6 +1368,36 @@ if (assistantThinkingTool.render(100).length !== 0) {
   throw new Error("Pi's thinking toggle revealed reasoning while Calm was on");
 }
 assistantThinkingTool.setHideThinkingBlock(true);
+// Pi's own thinking toggle and status line, driven from Pi's default setting of false.
+const toggleChat = { children: [], addChild(component) { this.children.push(component); } };
+let savedHideThinkingBlock;
+const toggleMode = {
+  hideThinkingBlock: false,
+  chatContainer: toggleChat,
+  ui: { requestRender() {} },
+  settingsManager: { setHideThinkingBlock(value) { savedHideThinkingBlock = value; } },
+  updateThinkingBlockVisibility() {},
+  showStatus: InteractiveMode.prototype.showStatus,
+};
+const toggleThinkingStatus = () => {
+  InteractiveMode.prototype.toggleThinkingBlockVisibility.call(toggleMode);
+  return toggleChat.children.flatMap((component) => component.render(120)).join("\n");
+};
+const calmHiddenToggleStatus = toggleThinkingStatus();
+if (
+  savedHideThinkingBlock !== true ||
+  !calmHiddenToggleStatus.includes("Thinking blocks: hidden once Calm is off; Calm keeps reasoning hidden")
+) {
+  throw new Error(`Calm-on thinking toggle misreported its state: ${JSON.stringify(calmHiddenToggleStatus)}`);
+}
+const calmVisibleToggleStatus = toggleThinkingStatus();
+if (
+  savedHideThinkingBlock !== false ||
+  toggleChat.children.length !== 2 ||
+  !calmVisibleToggleStatus.includes("Thinking blocks: visible once Calm is off; Calm keeps reasoning hidden")
+) {
+  throw new Error(`Calm-on thinking toggle claimed visible reasoning: ${JSON.stringify(calmVisibleToggleStatus)}`);
+}
 if (JSON.stringify(sessionEntries) !== entriesBefore) {
   throw new Error("calm mode changed session entries or model context");
 }
@@ -1402,6 +1433,14 @@ if (workingVisible !== true || hiddenThinkingLabel !== undefined || statuses.get
 }
 if (!assistantThinkingTool.render(100).join("\n").includes("Thinking...")) {
   throw new Error("turning Calm off did not restore the collapsed thinking label");
+}
+const calmOffToggleStatus = toggleThinkingStatus();
+if (
+  savedHideThinkingBlock !== true ||
+  !calmOffToggleStatus.includes("Thinking blocks: hidden") ||
+  calmOffToggleStatus.includes("Calm")
+) {
+  throw new Error(`Calm-off thinking toggle did not keep Pi's own confirmation: ${JSON.stringify(calmOffToggleStatus)}`);
 }
 if (readFileSync(`${process.env.FM_HOME}/config/calm`, "utf8") !== "off\n") {
   throw new Error("Calm did not persist the inactive choice in the effective Firstmate home");
@@ -2304,13 +2343,13 @@ TS
   # Pi's thinking toggle flips the captain's own setting from its default false to true
   # and back; neither value may reveal reasoning while Calm is on.
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-t
-  wait_for_geometry_text "$snapshot" "Thinking blocks: hidden" \
-    || fail "Pi's thinking toggle did not collapse thinking"
+  wait_for_geometry_text "$snapshot" "Thinking blocks: hidden once Calm is off; Calm keeps reasoning hidden" \
+    || fail "Pi's thinking toggle did not report its collapsed setting honestly under Calm"
   assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_THINKING_ONE" "collapsing thinking revealed Calm-hidden reasoning"
   assert_geometry_gap "$snapshot" "collapsed-thinking native Calm transcript"
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-t
-  wait_for_geometry_text "$expanded_snapshot" "Thinking blocks: visible" \
-    || fail "Pi's thinking toggle did not expand thinking"
+  wait_for_geometry_text "$expanded_snapshot" "Thinking blocks: visible once Calm is off; Calm keeps reasoning hidden" \
+    || fail "Pi's thinking toggle claimed visible thinking blocks under Calm"
   assert_not_contains "$(cat "$expanded_snapshot")" "CALM_GEOMETRY_THINKING_ONE" "expanding thinking revealed Calm-hidden reasoning"
   assert_not_contains "$(cat "$expanded_snapshot")" "probe-one.txt" "thinking expansion restored Calm-hidden tool rows"
   assert_geometry_gap "$expanded_snapshot" "expanded-thinking native Calm transcript"

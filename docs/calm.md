@@ -18,8 +18,10 @@ Calm hides assistant reasoning, the shells for the Pi built-in tool names Calm o
 Calm keeps mid-turn assistant working notes visible: they are the narration a model emits alongside its tool calls, and the captain relies on that narration to see what an agent is actually doing.
 A mid-turn working note is assistant text in a message the model did not end its response with, identified by that message's own `stopReason` of `toolUse`, or of `length` with tool calls present.
 The genuine reply that ends a response also stays visible, exactly like a working note.
-Calm guarantees reasoning stays hidden while it is on: it removes every thinking block from the live transcript presentation whatever Pi's own `hideThinkingBlock` setting says, and Pi's thinking toggle cannot reveal it.
+Calm guarantees reasoning is not displayed while it is on: it removes every thinking block from the live transcript presentation whatever Pi's own `hideThinkingBlock` setting says.
 Calm manages that setting's effect itself rather than depending on the captain having set it, and never writes the setting, so turning Calm off, including after a restart or reload with Calm on, restores exactly the value the captain had.
+Pi's thinking toggle still changes and saves the captain's own setting while Calm is on, but it cannot reveal reasoning, and its confirmation reports the new state as applying once Calm is off, for example `Thinking blocks: visible once Calm is off; Calm keeps reasoning hidden`.
+The guarantee is implemented by presentation, so it depends on Calm's collapsed-thinking patch point in Pi remaining available; if Pi removes that seam, Calm logs a diagnostic and skips only that adapter, as described under [Pi compatibility](#pi-compatibility).
 The reasoning remains in the message, model context, session storage, and `/export` artifacts.
 The operational inputs Calm classifies remain ordinary user-role messages, while Pi's transcript layout renders their complete rows at zero height.
 The session-start nudge remains on its existing non-displayed custom-message path.
@@ -37,9 +39,8 @@ These are supported-API boundaries rather than hidden-content failures.
 ## Pi compatibility
 
 Calm has no numeric Pi version minimum or maximum and never refuses Pi solely because its version is newer than a previously verified version.
-The collapsed-thinking and operational-user-row presentation adapters probe the exact Pi API seam they patch when Calm loads.
-If Pi removes one of those seams, Calm logs a diagnostic naming the unavailable adapter and skips only that adapter; `/calm`, the other adapter, and unrelated Pi extensions remain available.
-Without the collapsed-thinking adapter, Pi's own `hideThinkingBlock` setting alone decides whether reasoning is shown.
+The collapsed-thinking, thinking-toggle, and operational-user-row presentation adapters probe the exact Pi API seam they patch when Calm loads.
+If Pi removes one of those seams, Calm logs a diagnostic naming the unavailable adapter and skips only that adapter; `/calm`, the other adapters, and unrelated Pi extensions remain available.
 
 Calm's built-in tool presentation (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) shares Pi's single, unmerged override slot per name with any other extension that overrides the same tool.
 While the persisted Calm preference is off, Calm registers none of those overrides and therefore contests no built-in tool name.

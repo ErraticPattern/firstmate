@@ -6,8 +6,8 @@
 // with a disposable component factory, and setHiddenThinkingLabel().
 // ./lib/fm-calm-working-ship.ts owns the animated working presentation this file
 // installs. The focused tests pin those assumptions but never reject a
-// newer Pi solely for its version. The collapsed-thinking and operational-user
-// presentation adapters probe the exact API they patch and degrade independently with a
+// newer Pi solely for its version. The collapsed-thinking, thinking-toggle, and
+// operational-user presentation adapters probe the exact API they patch and degrade independently with a
 // diagnostic (see installCalmPresentationAdapter below) if a future Pi removes it; Pi
 // still exposes no global renderer for arbitrary built-in or custom rows.
 // docs/configuration.md owns the home-local Calm preference contract.
@@ -47,7 +47,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, Container, getKeybindings, type Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
-import { installCalmAssistantLayout } from "./lib/fm-calm-assistant-layout.ts";
+import {
+  installCalmAssistantLayout,
+  installCalmThinkingToggleLabel,
+} from "./lib/fm-calm-assistant-layout.ts";
 import { installCalmOperationalUserLayout } from "./lib/fm-calm-operational-user-layout.ts";
 import {
   CALM_WORKING_SHIP_WIDGET_KEY,
@@ -121,6 +124,7 @@ function installCalmPresentationAdapter(name: string, install: () => void): void
 
 export default function (pi: ExtensionAPI) {
   installCalmPresentationAdapter("collapsed-thinking", installCalmAssistantLayout);
+  installCalmPresentationAdapter("thinking-toggle", installCalmThinkingToggleLabel);
   installCalmPresentationAdapter("operational-user-row", installCalmOperationalUserLayout);
 
   let exportRendering = false;
