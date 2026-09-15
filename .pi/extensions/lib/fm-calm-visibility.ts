@@ -32,8 +32,7 @@ export type CalmTranscriptClass = (typeof CALM_TRANSCRIPT_CLASSES)[number];
 // Calm shows the captain what an agent is doing without showing its reasoning.
 // "assistant-working-note" is the mid-turn narration an agent writes between tool
 // calls, so it stays visible; "assistant-thinking" is the agent's reasoning, so it
-// stays hidden and depends on Pi's own hideThinkingBlock setting for the collapsed
-// thinking label.
+// stays hidden whatever Pi's own hideThinkingBlock setting says.
 const CALM_VISIBLE_CLASSES = new Set<CalmTranscriptClass>([
   "genuine-user-prompt",
   "genuine-agent-response",

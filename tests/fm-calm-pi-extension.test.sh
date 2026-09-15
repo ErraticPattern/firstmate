@@ -1363,13 +1363,10 @@ if (JSON.stringify(assistantThinkingText.render(100)) !== JSON.stringify(assista
   throw new Error("Calm-hidden thinking changed final assistant row geometry");
 }
 assistantThinkingTool.setHideThinkingBlock(false);
-if (!assistantThinkingTool.render(100).join("\n").includes("HIDDEN_TOOL_THINKING")) {
-  throw new Error("expanding thinking did not restore the original reasoning content");
+if (assistantThinkingTool.render(100).length !== 0) {
+  throw new Error("Pi's thinking toggle revealed reasoning while Calm was on");
 }
 assistantThinkingTool.setHideThinkingBlock(true);
-if (assistantThinkingTool.render(100).length !== 0) {
-  throw new Error("collapsing thinking again restored residual Calm rows");
-}
 if (JSON.stringify(sessionEntries) !== entriesBefore) {
   throw new Error("calm mode changed session entries or model context");
 }
@@ -1586,11 +1583,22 @@ const messages = {
     stopReason: "length",
     content: [{ type: "text", text: "TRUNCATED_FINAL_TEXT" }],
   },
+  // Reasoning beside narration, rendered with Pi's default hideThinkingBlock of false,
+  // so Pi alone would show the full reasoning.
+  reasoning: {
+    ...assistantBase,
+    stopReason: "toolUse",
+    content: [
+      { type: "thinking", thinking: "PI_DEFAULT_REASONING" },
+      { type: "text", text: "REASONING_ROW_NOTE" },
+      toolCall,
+    ],
+  },
 };
 const messagesBefore = JSON.stringify(messages);
 const rows = {};
 for (const [name, message] of Object.entries(messages)) {
-  rows[name] = new AssistantMessageComponent(message, true);
+  rows[name] = new AssistantMessageComponent(message, name !== "reasoning");
   components.push(rows[name]);
 }
 const rendered = (name) => rows[name].render(100);
@@ -1605,6 +1613,24 @@ const requireVisible = (name, needle, context) => {
     throw new Error(`${context}: ${name} lost ${needle}`);
   }
 };
+const requireHidden = (name, needle, context) => {
+  if (renderedText(name).includes(needle)) {
+    throw new Error(`${context}: ${name} still rendered ${needle}`);
+  }
+};
+// Pi streams through updateContent(message, true), and markdown transformers see that
+// flag; the layout must forward it whether or not Calm is on.
+const streamingProbe = new AssistantMessageComponent(undefined, true, undefined, undefined, undefined, [
+  (markdown, { isStreaming }) => (isStreaming ? `${markdown} STREAMING_FLAG` : markdown),
+]);
+const requireStreamingFlag = (context) => {
+  for (const isStreaming of [true, false]) {
+    streamingProbe.updateContent(messages.streaming, isStreaming);
+    if (streamingProbe.render(100).join("\n").includes("STREAMING_FLAG") !== isStreaming) {
+      throw new Error(`${context}: the assistant layout dropped Pi's isStreaming=${isStreaming}`);
+    }
+  }
+};
 let calm = await loadCalmExtension();
 if (calm.registeredTools.length !== 0) {
   throw new Error("Calm claimed built-in tools with no persisted preference");
@@ -1615,6 +1641,8 @@ for (const name of Object.keys(rows)) {
   if (rendered(name).length === 0) throw new Error(`Calm-off rendering hid ${name}`);
 }
 requireVisible("midTurn", "MIDTURN_WORKING_NOTE", "Calm off");
+requireVisible("reasoning", "PI_DEFAULT_REASONING", "Calm off");
+requireStreamingFlag("Calm off");
 
 await calm.calmCommand.handler("", context);
 if (readFileSync(calmPreferencePath, "utf8") !== "on\n") {
@@ -1625,6 +1653,13 @@ requireVisible("truncatedMidTurn", "TRUNCATED_MIDTURN_NOTE", "Calm on");
 requireVisible("streaming", "STREAMING_NOTE_TEXT", "Calm on");
 requireVisible("truncatedFinal", "TRUNCATED_FINAL_TEXT", "Calm on");
 requireVisible("finalReply", "FINAL_REPLY_TEXT", "Calm on");
+requireVisible("reasoning", "REASONING_ROW_NOTE", "Calm on");
+requireHidden("reasoning", "PI_DEFAULT_REASONING", "Calm on");
+// Pi's thinking toggle re-applies the captain's setting to every row; it cannot reveal
+// reasoning while Calm is on.
+rows.reasoning.setHideThinkingBlock(false);
+requireHidden("reasoning", "PI_DEFAULT_REASONING", "Calm on after Pi's thinking toggle");
+requireStreamingFlag("Calm on");
 if (JSON.stringify(rendered("finalReply")) !== stockRows.finalReply) {
   throw new Error("Calm on changed the genuine final reply row");
 }
@@ -1639,6 +1674,7 @@ if (readFileSync(calmPreferencePath, "utf8") !== "off\n") {
   throw new Error("/calm max was still read as a level instead of the plain toggle");
 }
 requireVisible("midTurn", "MIDTURN_WORKING_NOTE", "Calm off after /calm max");
+requireVisible("reasoning", "PI_DEFAULT_REASONING", "Calm off after /calm max");
 const restoredRows = snapshot();
 for (const name of Object.keys(rows)) {
   if (restoredRows[name] !== stockRows[name]) {
@@ -1677,6 +1713,7 @@ for (const persisted of ["on\n", "max\n", "max"]) {
       );
     }
     requireVisible("finalReply", "FINAL_REPLY_TEXT", `${reason} session`);
+    requireHidden("reasoning", "PI_DEFAULT_REASONING", `${reason} session`);
   }
   // A session restored as on toggles to off; one that had wrongly dropped to off would
   // persist "on" here instead.
@@ -1685,6 +1722,7 @@ for (const persisted of ["on\n", "max\n", "max"]) {
     throw new Error(`${JSON.stringify(persisted)} did not restore as ordinary Calm on`);
   }
   requireVisible("midTurn", "MIDTURN_WORKING_NOTE", "Calm toggled off after restore");
+  requireVisible("reasoning", "PI_DEFAULT_REASONING", "Calm toggled off after restore");
 }
 if (!existsSync(calmPreferencePath)) {
   throw new Error("Calm stopped persisting its preference file");
@@ -1694,7 +1732,7 @@ JS
   out=$(cat "$output_file")
   [ "$status" -eq 0 ] || fail "Pi calm mid-turn contract failed: $out"
   [ -z "$out" ] || fail "Pi calm mid-turn test printed output: $out"
-  pass "Pi calm on keeps mid-turn assistant working notes visible exactly like Calm off, leaves streaming, truncated-final, and genuine final replies untouched, never mutates the messages, ignores every /calm argument, and restores a legacy persisted max as ordinary Calm on"
+  pass "Pi calm on keeps mid-turn assistant working notes visible exactly like Calm off while hiding reasoning under Pi's default hideThinkingBlock setting, restores that setting's rendering when Calm turns off including after a restart, forwards Pi's streaming flag, leaves streaming, truncated-final, and genuine final replies untouched, never mutates the messages, ignores every /calm argument, and restores a legacy persisted max as ordinary Calm on"
 }
 
 test_operational_followup_turn_e2e() {
@@ -2093,7 +2131,8 @@ test_hidden_block_geometry_e2e() {
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
   printf '%s\n' on >"$home/config/calm"
-  printf '%s\n' '{"hideThinkingBlock":true,"terminal":{"clearOnShrink":false}}' >"$config/settings.json"
+  # Pi's default hideThinkingBlock of false renders reasoning in full; Calm must hide it anyway.
+  printf '%s\n' '{"terminal":{"clearOnShrink":false}}' >"$config/settings.json"
   printf '%s\n' 'tool result one' >"$project/probe-one.txt"
   printf '%s\n' 'tool result two' >"$project/probe-two.txt"
   cat >"$project/.agents/skills/ahoy/SKILL.md" <<'MD'
@@ -2213,6 +2252,10 @@ TS
       || fail "$label left $gap rows between the collapsed skill row and final response instead of the two standard visible-row separators"
   }
 
+  persisted_hide_thinking() {
+    node -p 'String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).hideThinkingBlock)' "$config/settings.json"
+  }
+
   start_geometry_pi "--session-dir '$sessions'"
   wait_for_geometry_text "$snapshot" "geometry-provider.ts" \
     || fail "Pi Calm hidden-block geometry E2E did not reach the ready composer"
@@ -2235,6 +2278,9 @@ TS
   assert_contains "$(cat "$snapshot")" "[skill] ahoy" "Calm hid the collapsed skill header"
   assert_contains "$(cat "$snapshot")" "CALM_GEOMETRY_FINAL" "Calm hid the final assistant response"
   assert_not_contains "$(cat "$snapshot")" "Thinking..." "Calm left a collapsed thinking label visible"
+  assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_THINKING_ONE" "Calm showed reasoning under Pi's default hideThinkingBlock setting"
+  assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_FINAL_THINKING" "Calm showed final reasoning under Pi's default hideThinkingBlock setting"
+  [ "$(persisted_hide_thinking)" = undefined ] || fail "Calm wrote Pi's hideThinkingBlock setting"
   assert_not_contains "$(cat "$snapshot")" "probe-one.txt" "Calm left a tool-call row visible"
   assert_not_contains "$(cat "$snapshot")" "tool result one" "Calm left a tool-result row visible"
   assert_geometry_gap "$snapshot" "completed native Calm /skill:ahoy turn"
@@ -2255,37 +2301,39 @@ TS
     || fail "Pi Calm hidden-block geometry E2E did not complete the /reload viewport transition"
   assert_geometry_gap "$snapshot" "reloaded native Calm transcript"
 
+  # Pi's thinking toggle flips the captain's own setting from its default false to true
+  # and back; neither value may reveal reasoning while Calm is on.
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-t
-  wait_for_geometry_text "$expanded_snapshot" "CALM_GEOMETRY_THINKING_ONE" \
-    || fail "thinking expansion did not restore Calm-hidden reasoning"
+  wait_for_geometry_text "$snapshot" "Thinking blocks: hidden" \
+    || fail "Pi's thinking toggle did not collapse thinking"
+  assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_THINKING_ONE" "collapsing thinking revealed Calm-hidden reasoning"
+  assert_geometry_gap "$snapshot" "collapsed-thinking native Calm transcript"
+  tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-t
+  wait_for_geometry_text "$expanded_snapshot" "Thinking blocks: visible" \
+    || fail "Pi's thinking toggle did not expand thinking"
+  assert_not_contains "$(cat "$expanded_snapshot")" "CALM_GEOMETRY_THINKING_ONE" "expanding thinking revealed Calm-hidden reasoning"
   assert_not_contains "$(cat "$expanded_snapshot")" "probe-one.txt" "thinking expansion restored Calm-hidden tool rows"
-  tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-t
-  i=0
-  while [ "$i" -lt 120 ]; do
-    capture_geometry_viewport "$snapshot"
-    grep -Fq "CALM_GEOMETRY_THINKING_ONE" "$snapshot" || break
-    sleep 0.05
-    i=$((i + 1))
-  done
-  assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_THINKING_ONE" "collapsing thinking restored hidden-row output"
-  assert_geometry_gap "$snapshot" "re-collapsed native Calm transcript"
+  assert_geometry_gap "$expanded_snapshot" "expanded-thinking native Calm transcript"
+  [ "$(persisted_hide_thinking)" = false ] || fail "Pi's thinking toggle did not persist the captain's own setting"
 
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/calm'
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" Enter
   wait_for_geometry_text "$calm_off_snapshot" "probe-one.txt" \
     || fail "turning Calm off did not restore the tool-call row"
-  assert_contains "$(cat "$calm_off_snapshot")" "Thinking..." "turning Calm off did not restore collapsed thinking labels"
+  wait_for_geometry_text "$calm_off_snapshot" "CALM_GEOMETRY_THINKING_ONE" \
+    || fail "turning Calm off did not restore reasoning under the captain's own setting"
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/calm'
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" Enter
   i=0
   while [ "$i" -lt 120 ]; do
     capture_geometry_viewport "$snapshot"
-    if ! grep -Fq "probe-one.txt" "$snapshot" && ! grep -Fq "Thinking..." "$snapshot"; then
+    if ! grep -Fq "probe-one.txt" "$snapshot" && ! grep -Fq "CALM_GEOMETRY_THINKING_ONE" "$snapshot"; then
       break
     fi
     sleep 0.05
     i=$((i + 1))
   done
+  assert_not_contains "$(cat "$snapshot")" "CALM_GEOMETRY_THINKING_ONE" "turning Calm back on left reasoning visible"
   assert_geometry_gap "$snapshot" "Calm redraw of existing transcript"
 
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/quit'
@@ -2296,13 +2344,19 @@ TS
   wait_for_geometry_text "$restarted_snapshot" "visible row two" \
     || fail "Pi did not restore the Calm hidden-block geometry session"
   assert_not_contains "$(cat "$restarted_snapshot")" "Thinking..." "restart restored a collapsed thinking label under Calm"
+  assert_not_contains "$(cat "$restarted_snapshot")" "CALM_GEOMETRY_THINKING_ONE" "restart revealed reasoning under Calm"
   assert_not_contains "$(cat "$restarted_snapshot")" "probe-one.txt" "restart restored a tool-call row under Calm"
   assert_geometry_gap "$restarted_snapshot" "restarted native Calm transcript"
+  tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/calm'
+  tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" Enter
+  wait_for_geometry_text "$calm_off_snapshot" "CALM_GEOMETRY_THINKING_ONE" \
+    || fail "turning Calm off after a restart did not restore reasoning under the captain's own setting"
+  [ "$(persisted_hide_thinking)" = false ] || fail "Calm changed the captain's persisted hideThinkingBlock setting"
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/quit'
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" Enter
   sleep 0.2
   tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  pass "Pi Calm native /skill:ahoy geometry keeps every collapsed thinking and tool block at zero height while preserving expansion, history, restart, and Calm-off rendering"
+  pass "Pi Calm native /skill:ahoy geometry keeps every thinking and tool block at zero height under Pi's default hideThinkingBlock setting, lets neither thinking-toggle value reveal reasoning, and restores the captain's own setting when Calm turns off, including after a restart"
 }
 
 test_working_ship_geometry_and_lifecycle() {
