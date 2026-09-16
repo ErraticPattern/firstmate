@@ -4,7 +4,7 @@ Calm is a Pi-only conversation presentation toggle.
 It is off by default, and the last `/calm` choice persists for the effective Firstmate home across Pi session starts and resumes.
 
 While Calm is active and an agent run is under way, Calm hides Pi's built-in `Working...` row and shows a small two-row animated boat in its place, and no separate Calm status row is added.
-The default `classic` animation is the original directional ASCII boat, with a `<|` or `|>` sail over a `\\__/` hull and a short blue repeating ripple.
+The default `classic` animation is the original directional ASCII boat, with a `<|` or `|>` sail over a `\__/` hull and a short blue repeating ripple.
 Set the home-local `config/calm-animation` preference to `swell` and reload Pi to select the newer animation.
 The `swell` animation fills the usable width with low one-cell Unicode bars, all in standard ANSI blue, so the swell shows through bar height alone.
 Its asymmetric three-cell `◿│◣` sail is centered over the five-cell `╲▁▁▁╱` hull, and the whole boat, both sail halves, mast, and hull, is one standard ANSI yellow, with the hull's zero-height interior keeping the swell continuous beneath the boat.
