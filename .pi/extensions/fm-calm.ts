@@ -56,6 +56,7 @@ import {
   CALM_WORKING_SHIP_WIDGET_KEY,
   createCalmWorkingShipAnimation,
   createCalmWorkingShipWidget,
+  type CalmWorkingAnimationStyle,
 } from "./lib/fm-calm-working-ship.ts";
 import {
   calmPresentationHides,
@@ -134,10 +135,24 @@ export default function (pi: ExtensionAPI) {
   // continuations, retries, or compaction that stay inside the same run.
   let agentRunActive = false;
   let workingShipShown = false;
+  const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
+  const configDirectory = process.env.FM_CONFIG_OVERRIDE || resolve(fmHome, "config");
+  const calmPreferencePath = resolve(configDirectory, "calm");
+  const calmAnimationPath = resolve(configDirectory, "calm-animation");
+  const loadCalmAnimationStyle = (): CalmWorkingAnimationStyle => {
+    try {
+      return readFileSync(calmAnimationPath, "utf8").trim() === "swell"
+        ? "swell"
+        : "classic";
+    } catch {
+      return "classic";
+    }
+  };
+  const workingAnimationStyle = loadCalmAnimationStyle();
   // One animation instance per extension lifetime. Hiding the working widget freezes
   // this state; the next working period resumes it. session_start resets it so a fresh
   // Pi session starts at the normal initial position. Never module-global.
-  const workingShipAnimation = createCalmWorkingShipAnimation();
+  const workingShipAnimation = createCalmWorkingShipAnimation(workingAnimationStyle);
 
   // Single owner of Calm's working-row presentation choice. The widget is only created
   // or removed on a real transition, so repeated starts cannot duplicate its timer.
@@ -151,7 +166,12 @@ export default function (pi: ExtensionAPI) {
       ui.setWidget(
         CALM_WORKING_SHIP_WIDGET_KEY,
         showShip
-          ? (tui) => createCalmWorkingShipWidget(tui, workingShipAnimation)
+          ? (tui) =>
+              createCalmWorkingShipWidget(
+                tui,
+                workingShipAnimation,
+                workingAnimationStyle,
+              )
           : undefined,
       );
       ui.setWorkingVisible(!showShip);
@@ -160,9 +180,6 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
-  const configDirectory = process.env.FM_CONFIG_OVERRIDE || resolve(fmHome, "config");
-  const calmPreferencePath = resolve(configDirectory, "calm");
   // "max" is the legacy value written by the removed third presentation level, whose
   // behavior is now ordinary Calm; a home upgraded from it restores as on rather than
   // dropping to off. docs/configuration.md owns the persisted value schema.

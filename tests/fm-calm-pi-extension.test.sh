@@ -11,6 +11,8 @@ ASSISTANT_LAYOUT="$ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts"
 OPERATIONAL_USER_LAYOUT="$ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
 VISIBILITY="$ROOT/.pi/extensions/lib/fm-calm-visibility.ts"
 WORKING_SHIP="$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts"
+WORKING_SHIP_CLASSIC="$ROOT/.pi/extensions/lib/fm-calm-working-ship-classic.ts"
+WORKING_SHIP_SWELL="$ROOT/.pi/extensions/lib/fm-calm-working-ship-swell.ts"
 WATCH_EXT="$ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 OPERATIONAL_INPUT="$ROOT/bin/fm-operational-input.sh"
 PI_OPERATIONAL_INPUT="$ROOT/.pi/extensions/lib/fm-operational-input.ts"
@@ -26,6 +28,13 @@ TMUX_SESSION="fm-calm-e2e"
 record_pi_version_evidence() {
   local version=$1 context=$2
   [ -n "$version" ] || fail "$context could not determine the installed Pi version"
+}
+
+copy_working_ship() {
+  local destination=$1
+  cp "$WORKING_SHIP" "$destination/fm-calm-working-ship.ts"
+  cp "$WORKING_SHIP_CLASSIC" "$destination/fm-calm-working-ship-classic.ts"
+  cp "$WORKING_SHIP_SWELL" "$destination/fm-calm-working-ship-swell.ts"
 }
 
 cleanup() {
@@ -170,7 +179,7 @@ test_home_resolution() {
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
@@ -292,7 +301,7 @@ test_pi_compat_degraded_adapter() {
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
@@ -391,7 +400,7 @@ test_pi_compat_missing_adapter_exports() {
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
   printf '%s\n' '{"type":"module"}' >"$fixture/project/package.json"
   printf '%s\n' \
@@ -452,7 +461,7 @@ test_builtin_gate_load_time() {
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
@@ -538,7 +547,7 @@ test_calm_activation_collision_and_regression_bound() {
   cp "$ASSISTANT_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/project/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/project/node_modules/@earendil-works/pi-tui"
@@ -752,7 +761,7 @@ test_rendering_and_session_lifecycle() {
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/lib"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/lib/fm-operational-input.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$fixture/lib/fm-branch-dispatch.ts"
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$fixture/lib/fm-native-contract.ts"
@@ -1505,7 +1514,7 @@ test_calm_mid_turn_working_notes() {
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
@@ -1793,7 +1802,7 @@ test_operational_followup_turn_e2e() {
   cp "$ASSISTANT_LAYOUT" "$project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
   printf '%s\n' '{"followUpMode":"all"}' >"$config/settings.json"
 
@@ -2167,7 +2176,7 @@ test_hidden_block_geometry_e2e() {
   cp "$ASSISTANT_LAYOUT" "$project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$project/.pi/extensions/lib"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
   printf '%s\n' on >"$home/config/calm"
   # Pi's default hideThinkingBlock of false renders reasoning in full; Calm must hide it anyway.
@@ -2417,7 +2426,7 @@ test_working_ship_geometry_and_lifecycle() {
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$fixture/lib"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
@@ -2425,6 +2434,7 @@ test_working_ship_geometry_and_lifecycle() {
   printf '%s\n' '{"type":"module"}' >"$fixture/package.json"
 
   out=$(cd "$fixture" && EXT="$fixture/fm-calm.ts" FM_HOME="$fixture/home" PI_PACKAGE_DIR="$PI_PACKAGE_DIR" node --input-type=module 2>&1 <<'JS'
+import { mkdirSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const packageRoot = process.env.PI_PACKAGE_DIR;
@@ -2442,9 +2452,22 @@ const {
   CALM_WORKING_SHIP_WIDGET_KEY,
   CALM_WORKING_SHIP_TICK_MS,
   CALM_WORKING_SHIP_TICKS_PER_MOVE,
-  createCalmWorkingShipAnimation,
+  createCalmWorkingShipAnimation: createSelectedWorkingShipAnimation,
   createCalmWorkingShipWidget,
 } = ship;
+
+const defaultAnimation = createSelectedWorkingShipAnimation();
+const defaultFrame = defaultAnimation.render(24).map((line) => line.replace(/\u001b\[[0-9;]*m/g, ""));
+if (!defaultFrame.some((line) => line.includes("<|")) || defaultFrame.some((line) => line.includes("◿│◣"))) {
+  throw new Error(`default Calm animation was not the classic directional boat: ${JSON.stringify(defaultFrame)}`);
+}
+const selectedSwellFrame = createSelectedWorkingShipAnimation("swell")
+  .render(24)
+  .map((line) => line.replace(/\u001b\[[0-9;]*m/g, ""));
+if (!selectedSwellFrame.some((line) => line.includes("◿│◣"))) {
+  throw new Error(`explicit swell selection did not retain the current animation: ${JSON.stringify(selectedSwellFrame)}`);
+}
+const createCalmWorkingShipAnimation = () => createSelectedWorkingShipAnimation("swell");
 
 const ESC = "\u001b";
 const BLUE = `${ESC}[34m`;
@@ -3030,6 +3053,8 @@ const pi = {
   sendUserMessage: (...args) => sessionWrites.push(["sendUserMessage", ...args]),
   setSessionName: (...args) => sessionWrites.push(["setSessionName", ...args]),
 };
+mkdirSync(`${process.env.FM_HOME}/config`, { recursive: true });
+writeFileSync(`${process.env.FM_HOME}/config/calm-animation`, "swell\n");
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?ship=${Date.now()}`);
 extension.default(pi);
 check(!!calmCommand, "Calm command was not registered");
@@ -3440,13 +3465,14 @@ test_interactive_terminal_e2e() {
   restarted_snapshot="$TMP_ROOT/restarted.txt"
   resumed_restored_snapshot="$TMP_ROOT/resumed-restored.txt"
   mkdir -p "$project/.pi/extensions/lib" "$project/bin" "$project/state" "$config" "$home/config"
+  printf '%s\n' swell >"$home/config/calm-animation"
   fm_git_init_commit "$project"
   : > "$project/AGENTS.md"
   cp "$EXT" "$project/.pi/extensions/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$project/.pi/extensions/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
+  copy_working_ship "$project/.pi/extensions/lib"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$project/.pi/extensions/lib/fm-operational-input.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$project/.pi/extensions/lib/fm-branch-dispatch.ts"
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$project/.pi/extensions/lib/fm-native-contract.ts"

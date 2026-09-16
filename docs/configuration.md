@@ -34,6 +34,15 @@ The `/calm` command replaces the file atomically before changing live presentati
 The extension reloads this preference on every Pi `session_start`, including startup, new, resume, fork, and reload reasons.
 This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
 
+### Calm working animation (config/calm-animation)
+
+The optional gitignored `config/calm-animation` file selects Calm's working animation for the effective Firstmate home using the same home and config-directory resolution as `config/calm`.
+An absent, unreadable, or unrecognized value selects `classic`, the directional ASCII boat over a short repeating ripple.
+Set the file to `swell`, followed by one newline, to select the newer asymmetric Unicode boat and long smooth swell.
+The extension reads this preference when it loads, so changing it takes effect after restarting or reloading Pi.
+This preference affects only the working animation while Calm is active and does not change Calm's transcript behavior.
+Like `config/calm`, it is local to each Firstmate home and is not inherited by secondmates.
+
 ## Pi supervision branch
 
 On a Pi primary, an in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews while keeping main-only rows on the captain-facing path; [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns its conversation lifecycle, row eligibility, mixed-queue dispatch, heartbeat routing, and pre-drain recheck.
