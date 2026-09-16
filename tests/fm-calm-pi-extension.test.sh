@@ -2456,10 +2456,84 @@ const {
   createCalmWorkingShipWidget,
 } = ship;
 
-const defaultAnimation = createSelectedWorkingShipAnimation();
-const defaultFrame = defaultAnimation.render(24).map((line) => line.replace(/\u001b\[[0-9;]*m/g, ""));
-if (!defaultFrame.some((line) => line.includes("<|")) || defaultFrame.some((line) => line.includes("◿│◣"))) {
-  throw new Error(`default Calm animation was not the classic directional boat: ${JSON.stringify(defaultFrame)}`);
+// --- Classic default: directional ASCII boat bouncing over fixed-cell water ----------
+{
+  const plain = (lines) => lines.map((line) => line.replace(/\u001b\[[0-9;]*m/g, ""));
+  const expect = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const advanceMove = (animation) => {
+    for (let step = 0; step < CALM_WORKING_SHIP_TICKS_PER_MOVE; step += 1) animation.tick();
+  };
+
+  const width = 12;
+  const span = width - 4;
+  const classic = createSelectedWorkingShipAnimation();
+  let frame = plain(classic.render(width));
+  expect(frame.length === 2, `classic default did not render two rows: ${JSON.stringify(frame)}`);
+  expect(frame[0] === " <|", `classic default did not start with a right-facing sail: ${JSON.stringify(frame)}`);
+  expect(frame[1].startsWith("\\__/") && frame[1].length === width, `classic hull row is wrong: ${JSON.stringify(frame)}`);
+  expect(!frame.some((line) => /[◿│◣▁▂▃▄╲╱]/.test(line)), `classic default rendered swell glyphs: ${JSON.stringify(frame)}`);
+
+  const trail = [];
+  for (let move = 0; move < span * 2 + 1; move += 1) {
+    advanceMove(classic);
+    frame = plain(classic.render(width));
+    const column = frame[1].indexOf("\\__/");
+    const sail = frame[0].trim();
+    expect(column === classic.position(), `classic hull drawn at ${column}, expected ${classic.position()}`);
+    expect(frame[0] === `${" ".repeat(column + 1)}${sail}`, `classic sail is not centered over the hull: ${JSON.stringify(frame)}`);
+    expect(frame.every((line) => line.length <= width), `classic frame overflowed ${width} columns`);
+    trail.push(`${column}${sail}`);
+  }
+  expect(
+    trail.join(" ") === "1<| 2<| 3<| 4<| 5<| 6<| 7<| 8|> 7|> 6|> 5|> 4|> 3|> 2|> 1|> 0<| 1<|",
+    `classic boat did not move and flip its sail on the exact bounce at both edges: ${trail.join(" ")}`,
+  );
+
+  const sailOnly = plain(createSelectedWorkingShipAnimation().render(3));
+  expect(sailOnly.length === 1 && sailOnly[0].length === 3 && sailOnly[0].startsWith("<|"), `classic sail-only fallback is wrong: ${JSON.stringify(sailOnly)}`);
+  const waterOnly = plain(createSelectedWorkingShipAnimation().render(1));
+  expect(waterOnly.length === 1 && /^[~-]$/.test(waterOnly[0]), `classic water-only fallback is wrong: ${JSON.stringify(waterOnly)}`);
+  expect(createSelectedWorkingShipAnimation().render(0).length === 0, "classic rendered rows for a zero width");
+
+  const callbacks = [];
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = (callback) => {
+    callbacks.push(callback);
+    return { unref() {} };
+  };
+  globalThis.clearInterval = () => {};
+  const fireMove = () => {
+    for (let step = 0; step < CALM_WORKING_SHIP_TICKS_PER_MOVE; step += 1) callbacks[callbacks.length - 1]();
+  };
+  try {
+    const tui = { requestRender() {} };
+    const frozen = createSelectedWorkingShipAnimation();
+    const first = createCalmWorkingShipWidget(tui, frozen);
+    first.render(width);
+    for (let move = 0; move < span; move += 1) {
+      fireMove();
+      first.render(width);
+    }
+    const hiddenFrame = plain(first.render(width));
+    fireMove();
+    first.dispose();
+    expect(first.render(width).length === 0, "disposed classic widget still rendered");
+    const resumed = createCalmWorkingShipWidget(tui, frozen);
+    const resumedFrame = plain(resumed.render(width));
+    expect(
+      JSON.stringify(resumedFrame) === JSON.stringify(hiddenFrame) && resumedFrame[0].trim() === "|>",
+      `classic boat did not resume from its frozen edge frame: ${JSON.stringify({ hiddenFrame, resumedFrame })}`,
+    );
+    fireMove();
+    expect(plain(resumed.render(width))[1].indexOf("\\__/") === span - 1, "classic boat did not continue left after resuming");
+    resumed.dispose();
+  } finally {
+    globalThis.setInterval = realSetInterval;
+    globalThis.clearInterval = realClearInterval;
+  }
 }
 const selectedSwellFrame = createSelectedWorkingShipAnimation("swell")
   .render(24)
@@ -3320,6 +3394,48 @@ check(
   `the working presentation wrote session or transcript data: ${JSON.stringify(sessionWrites)}`,
 );
 
+// --- With no calm-animation file the extension installs the classic boat ----------
+{
+  const defaultConfig = `${process.env.FM_HOME}/default-animation-config`;
+  mkdirSync(defaultConfig, { recursive: true });
+  writeFileSync(`${defaultConfig}/calm`, "on\n");
+  const previousOverride = process.env.FM_CONFIG_OVERRIDE;
+  process.env.FM_CONFIG_OVERRIDE = defaultConfig;
+  const defaultHandlers = new Map();
+  const defaultPi = {
+    ...pi,
+    on(event, handler) {
+      const existing = defaultHandlers.get(event) ?? [];
+      existing.push(handler);
+      defaultHandlers.set(event, existing);
+    },
+    registerCommand() {},
+  };
+  try {
+    const defaultExtension = await import(`${pathToFileURL(process.env.EXT).href}?default-ship=${Date.now()}`);
+    defaultExtension.default(defaultPi);
+  } finally {
+    if (previousOverride === undefined) delete process.env.FM_CONFIG_OVERRIDE;
+    else process.env.FM_CONFIG_OVERRIDE = previousOverride;
+  }
+  const fireDefault = async (event, payload = {}) => {
+    for (const handler of defaultHandlers.get(event) ?? []) await handler(payload, ctx);
+  };
+  reset();
+  await fireDefault("session_start", { reason: "startup" });
+  await fireDefault("agent_start");
+  const defaultWidget = shipWidget();
+  check(!!defaultWidget, "the default extension path did not install the working boat");
+  const defaultFrame = defaultWidget.render(24).map(strip);
+  check(
+    defaultFrame.length === 2 && defaultFrame[0] === " <|" && defaultFrame[1].startsWith("\\__/"),
+    `the default extension path did not install the classic boat: ${JSON.stringify(defaultFrame)}`,
+  );
+  await fireDefault("agent_settled");
+  check(liveTimers === 0, "the default extension path left its animation running");
+  await fireDefault("session_shutdown", { reason: "quit" });
+}
+
 globalThis.setInterval = realSetInterval;
 globalThis.clearInterval = realClearInterval;
 JS
@@ -3327,7 +3443,7 @@ JS
   status=$?
   [ "$status" -eq 0 ] || fail "Pi Calm working-ship checks failed: $out"
   [ -z "$out" ] || fail "Pi Calm working-ship test printed output: $out"
-  pass "Pi Calm working ship keeps its centered two-row asymmetric Unicode boat inside a deterministic long-wave trough, paints all water standard blue and the whole boat standard yellow with balanced resets, keeps ANSI-stripped width exact, reverses cleanly at both edges and every width, clamps visible and hidden resizes, falls back deterministically when narrow, freezes and resumes across settle/start without hidden-time jumps or duplicate timers, resets only on a fresh session, and leaves Calm-off visibility untouched"
+  pass "Pi Calm working ship defaults to the classic directional boat, which bounces with an edge-exact sail flip, falls back when narrow, and freezes and resumes across hide/show; the opt-in swell style keeps its centered two-row asymmetric Unicode boat inside a deterministic long-wave trough, paints all water standard blue and the whole boat standard yellow with balanced resets, keeps ANSI-stripped width exact, reverses cleanly at both edges and every width, clamps visible and hidden resizes, falls back deterministically when narrow, freezes and resumes across settle/start without hidden-time jumps or duplicate timers, resets only on a fresh session, and leaves Calm-off visibility untouched"
 }
 
 # The rendered-DOM assertions below depend on a real browser, so the render step
