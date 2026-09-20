@@ -1,0 +1,96 @@
+
+############ S1: two finished records name one slot; claim names the newer task ############
+--- fm-teardown.sh stale-task --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: task stale-task's recorded worktree $CASE/s1/pool/1/project is also task claimant-task's recorded worktree.
+Returning that pool slot would kill claimant-task's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh stale-task; bin/fm-crew-state.sh claimant-task), then re-run teardown.
+exit=1
+--- records after:
+    claimant-task.meta
+    stale-task.meta
+--- claimant worker alive: yes
+--- claim file after:
+    task=claimant-task
+    home=$CASE/s1/other-home
+--- claimant worktree sentinel: present
+--- runtime calls:
+
+############ S4: the claimant's own teardown now returns the slot normally ############
+--- fm-teardown.sh claimant-task --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: task claimant-task's recorded worktree $CASE/s1/pool/1/project is also task stale-task's recorded worktree.
+Returning that pool slot would kill stale-task's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh claimant-task; bin/fm-crew-state.sh stale-task), then re-run teardown.
+exit=1
+--- records after:
+    claimant-task.meta
+    .guard-watcher-stale-banner
+    stale-task.meta
+--- runtime calls:
+
+############ S2 (adversarial): two live records, NO owner claim -> must still refuse ############
+--- fm-teardown.sh task-a --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: task task-a's recorded worktree $CASE/s2/pool/1/project is also task task-b's recorded worktree.
+Returning that pool slot would kill task-b's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh task-a; bin/fm-crew-state.sh task-b), then re-run teardown.
+exit=1
+--- records after:
+    task-a.meta
+    task-b.meta
+--- sentinel: present
+--- runtime calls: []
+
+############ S3 (adversarial): two live records + UNREADABLE claim -> refuse before the scan ############
+--- fm-teardown.sh task-a --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: task task-a's recorded worktree $CASE/s3/pool/1/project is also task task-b's recorded worktree.
+Returning that pool slot would kill task-b's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh task-a; bin/fm-crew-state.sh task-b), then re-run teardown.
+exit=1
+--- records after:
+    task-a.meta
+    task-b.meta
+--- runtime calls: []
+
+############ S5: claim names THIS task -> ordinary teardown returns the slot ############
+--- fm-teardown.sh mine --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown mine complete (window firstmate:fm-mine, worktree $CASE/s5/worktree)
+Backlog: mine just finished (this home keeps no markdown backlog at $CASE/s5/home/data/backlog.md). Update $CASE/s5/home/data/backlog.md - move mine to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+--- records after:
+    .guard-watcher-stale-banner
+    home-summary.json
+    terminal-outcomes
+--- claim file: dropped
+--- runtime calls:
+    treehouse <return> <--force> <$CASE/s5/worktree>
+    tmux <kill-window> <-t> <=firstmate:=fm-mine>
+
+BASE=$CASE
