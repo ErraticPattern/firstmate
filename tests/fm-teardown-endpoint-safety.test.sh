@@ -972,6 +972,68 @@ test_own_and_absent_slot_claims_still_tear_down() {
   pass "fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down"
 }
 
+# The ordinary reuse-collision shape (observed 2026-09-20): TWO live task
+# records both name the same pool slot, and the slot's own owner claim names
+# the newer of the two. The record scan alone cannot tell which record is
+# stale, but the claim can - it must be read, and the stale record's own
+# cleanup must succeed, before the exclusivity scan ever gets to refuse.
+test_two_live_records_with_owner_claim_lets_the_stale_record_finish() {
+  local dir id=stale-task other=claimant-task worker rc
+
+  dir=$(make_case slot-collision-claimed)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$other" "$dir/other-home"
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] \
+    || fail "the stale record's own cleanup refused despite a claim proving it is not the slot's owner: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$id.meta" "the stale record was not removed by its own cleanup"
+  assert_present "$dir/home/state/$other.meta" "the claimant's own record was touched by the stale task's cleanup"
+  kill -0 "$worker" 2>/dev/null || fail "the stale task's cleanup killed the claimant's live worker"
+  assert_present "$dir/worktree/sentinel" "the stale task's cleanup reset the claimant's copy"
+  assert_present "$dir/pool/1/.fm-slot-owner" "the stale task's cleanup removed the claimant's slot claim"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$other" \
+    "the stale task's cleanup rewrote the claimant's slot claim"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the stale task's cleanup returned the claimant's live pool slot: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$other" \
+    "the warning should name the task the slot was reassigned to"
+  assert_contains "$(cat "$dir/stderr")" "reassigned" \
+    "the warning should name the reassignment as the cause"
+
+  # The claimant's own teardown, once the stale record is gone, must return the
+  # slot exactly like an ordinary uncontested teardown - the earlier collision
+  # must leave nothing behind that would still block it.
+  set +e
+  run_case "$dir" "$other" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  # The claimant's own teardown legitimately reaps a leaked process still
+  # sitting in its own worktree, so the sentinel worker will not survive this
+  # call the way it survived the stale task's cleanup above.
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+  [ "$rc" -eq 0 ] \
+    || fail "the claimant's own teardown failed once the stale record was gone: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$other.meta" "the claimant's teardown left its own record"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the claimant's teardown did not return its own pool slot: $(cat "$dir/runtime.log")"
+
+  pass "fm-teardown: two live records naming one slot let the record the owner claim rejects finish its own cleanup, and the claimant tears down normally once it is gone"
+}
+
 # The tmux shim used by the endpoint-close tests below: every subcommand
 # reaches the real isolated server, so presence is always read from real tmux.
 # When FM_TEST_BLOCK_KILL is set, `kill-window` alone fails without forwarding,
@@ -1358,6 +1420,7 @@ test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_own_and_absent_slot_claims_still_tear_down
+test_two_live_records_with_owner_claim_lets_the_stale_record_finish
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot
