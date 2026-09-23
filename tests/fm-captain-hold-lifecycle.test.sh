@@ -3805,6 +3805,72 @@ test_released_merge_passes_the_entrypoint_and_lands() {
   pass "a released merge passes the guarded entrypoint and remains recently landed"
 }
 
+test_local_merge_lands_on_recorded_working_branch_and_refuses_divergence() {
+  local home repo target id wt head out rc diverged_id diverged_wt
+  home=$(make_home local-working-branch-merge)
+  repo="$home/projects/sample"
+  target=sway-debian-stabilization
+  git -C "$repo" branch "$target" main
+  git -C "$repo" checkout -q "$target"
+
+  id=sample-working-branch
+  wt="$home/projects/$id"
+  fm_git_worktree "$repo" "$wt" "fm/$id"
+  printf 'working branch delivery\n' > "$wt/delivery.txt"
+  git -C "$wt" add delivery.txt
+  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm 'working branch delivery'
+  tasks_in "$home" add "$id" "Land on the configured working branch" --kind ship \
+    --repo sample --start >/dev/null || fail "could not create working-branch task"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
+    "project=$repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "landing_target=$target" "spawn_gen=fixture-$id"
+  run_captain "$home" hold "$id" --reason "captain local merge approval pending" >/dev/null \
+    || fail "could not hold working-branch task"
+  printf 'Land the local change.\n' > "$home/working-branch-answer.txt"
+  run_captain "$home" answer "$id" --release --decision-file "$home/working-branch-answer.txt" \
+    >/dev/null || fail "could not release working-branch task"
+  out=$(PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$ROOT/bin/fm-merge-local.sh" "$id") || fail "working-branch local merge failed"
+  head=$(git -C "$wt" rev-parse HEAD)
+  [ "$(git -C "$repo" rev-parse "$target")" = "$head" ] \
+    || fail "working-branch local merge did not advance $target"
+  assert_contains "$out" "local $target" "working-branch merge did not report its target"
+
+  diverged_id=sample-working-branch-diverged
+  diverged_wt="$home/projects/$diverged_id"
+  git -C "$repo" checkout -q main
+  fm_git_worktree "$repo" "$diverged_wt" "fm/$diverged_id"
+  printf 'diverged delivery\n' > "$diverged_wt/diverged.txt"
+  git -C "$diverged_wt" add diverged.txt
+  git -C "$diverged_wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm 'diverged delivery'
+  git -C "$repo" checkout -q "$target"
+  tasks_in "$home" add "$diverged_id" "Reject a diverged working-branch merge" --kind ship \
+    --repo sample --start >/dev/null || fail "could not create diverged task"
+  fm_write_meta "$home/state/$diverged_id.meta" \
+    "window=firstmate:fm-$diverged_id" "endpoint_task_id=$diverged_id" "worktree=$diverged_wt" \
+    "project=$repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "landing_target=$target" "spawn_gen=fixture-$diverged_id"
+  run_captain "$home" hold "$diverged_id" --reason "captain local merge approval pending" >/dev/null \
+    || fail "could not hold diverged task"
+  printf 'Land the local change.\n' > "$home/diverged-answer.txt"
+  run_captain "$home" answer "$diverged_id" --release --decision-file "$home/diverged-answer.txt" \
+    >/dev/null || fail "could not release diverged task"
+  set +e
+  out=$(PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$ROOT/bin/fm-merge-local.sh" "$diverged_id" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "diverged working-branch merge should refuse"
+  assert_contains "$out" "not a fast-forward of $target" \
+    "diverged working-branch merge did not name its target"
+  pass "local merge lands on its recorded working branch and refuses divergence"
+}
+
 # "Cannot tell" is not permission to close. A ship row has no separate
 # inventory gate ahead of the close, so the predicate itself must refuse before
 # any destructive step when the hold cannot be read.
@@ -4024,6 +4090,7 @@ test_merge_entrypoints_validate_identity_and_state_before_locking
 test_merge_entrypoints_refuse_a_reused_task_incarnation
 test_merge_entrypoints_serialize_forced_teardown_before_task_reads
 test_released_merge_passes_the_entrypoint_and_lands
+test_local_merge_lands_on_recorded_working_branch_and_refuses_divergence
 test_teardown_refuses_a_ship_when_the_captain_hold_cannot_be_read
 test_verify_resolves_a_hold_migrated_to_beads_notes
 test_verify_resolves_a_hold_migrated_under_the_configured_prefix

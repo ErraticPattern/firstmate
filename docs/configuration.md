@@ -130,6 +130,27 @@ The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in,
 tasks-axi writes by renaming a temp file over its target, which replaces a symlink with a regular file, so linking the code-root copy into the home forks the queue on the first such write rather than keeping the two in step.
 Every routine firstmate backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory exactly as lifecycle transitions do, and bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that is not this home's own file as a `BACKLOG_RECONCILE: code-root ...` line even in a read-only session.
 
+## Local landing targets (config/local-landing-targets)
+
+A local-only task normally lands on the project's default branch, exactly as it did before this setting existed.
+To declare a non-default working branch, create the local gitignored `config/local-landing-targets` file with one tab-separated mapping per line:
+
+```text
+dotfiles\tsway-debian-stabilization
+```
+
+The first field is the project clone basename and the second is its local branch name.
+Blank lines and lines beginning with `#` are ignored.
+Each project may appear once.
+The configured target must exist locally and must not be the detected default branch.
+Malformed, unreadable, unsafe, duplicate, or contradictory mappings refuse a local-only launch rather than guessing.
+At intake, `fm-spawn.sh --landing-target <branch>` may provide an explicit target for one local-only task.
+An explicit target must agree with any configured mapping, is recorded as `landing_target=` in that task's metadata, and survives recovery relaunches.
+When no target is configured or passed, no metadata field is written and the existing default-branch behavior is unchanged.
+`bin/fm-merge-local.sh` fast-forwards only the recorded target while its primary checkout is clean and checked out on that target.
+`bin/fm-teardown.sh` treats an unpushed local-only task with a recorded target as landed only when its worktree HEAD is an ancestor of that target.
+The script headers own parsing and exact refusal mechanics.
+
 ## Runtime backend (config/backend / FM_BACKEND)
 
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.

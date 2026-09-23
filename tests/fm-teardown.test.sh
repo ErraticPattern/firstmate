@@ -761,6 +761,45 @@ test_local_only_truly_unpushed_refuses() {
   pass "local-only worktree with truly unpushed work is refused (safety preserved)"
 }
 
+test_local_only_merged_to_configured_target_allows() {
+  local case_dir rc wt_head
+  case_dir=$(make_case merged-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into configured target"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "merged-working-branch: teardown should accept work merged into its recorded target"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "merged-working-branch: teardown printed a REFUSED line"
+  pass "local-only worktree with work merged into its configured branch is torn down"
+}
+
+test_local_only_unmerged_configured_target_refuses() {
+  local case_dir rc
+  case_dir=$(make_case unmerged-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "not merged into configured target"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unmerged-working-branch: teardown should refuse unlanded work"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "unmerged-working-branch: refusal did not name the recorded target"
+  pass "local-only worktree unmerged from its configured branch is refused"
+}
+
 test_local_only_merged_to_local_main_allows() {
   local case_dir rc
   case_dir=$(make_case merged-main)
@@ -3670,6 +3709,8 @@ test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
+test_local_only_merged_to_configured_target_allows
+test_local_only_unmerged_configured_target_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses

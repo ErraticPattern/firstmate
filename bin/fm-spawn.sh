@@ -5,7 +5,10 @@
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
-#   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
+#   spawn and refused on --scout and --secondmate spawns. --landing-target
+#   <branch> optionally overrides a configured local-only landing target for this
+#   task; it is recorded as landing_target= and must name a non-default local
+#   branch. config/local-landing-targets owns configured target syntax. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
 #   standing posture as context, not as this task's answer, so a spawn never looks
 #   the mode up. A ship spawn additionally reads the brief's recorded
@@ -498,6 +501,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-landing-target-lib.sh
+. "$SCRIPT_DIR/fm-landing-target-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
@@ -514,6 +519,7 @@ EFFORT=
 BACKEND_ARG=
 MODE=
 YOLO=
+LANDING_TARGET_ARG=
 TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
@@ -521,6 +527,7 @@ EFFORT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
+LANDING_TARGET_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
@@ -557,6 +564,10 @@ for a in "$@"; do
     yolo)
       YOLO=$a
       YOLO_SET=1
+      ;;
+    landing-target)
+      LANDING_TARGET_ARG=$a
+      LANDING_TARGET_SET=1
       ;;
     traceparent)
       TRACEPARENT_ARG=$a
@@ -610,6 +621,11 @@ for a in "$@"; do
     YOLO=${a#--yolo=}
     YOLO_SET=1
     ;;
+  --landing-target) want_value=landing-target ;;
+  --landing-target=*)
+    LANDING_TARGET_ARG=${a#--landing-target=}
+    LANDING_TARGET_SET=1
+    ;;
   --traceparent) want_value=traceparent ;;
   --traceparent=*)
     TRACEPARENT_ARG=${a#--traceparent=}
@@ -644,6 +660,10 @@ done
 }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || {
   echo "error: --yolo requires a non-empty value" >&2
+  exit 1
+}
+[ "$LANDING_TARGET_SET" -eq 0 ] || [ -n "$LANDING_TARGET_ARG" ] || {
+  echo "error: --landing-target requires a non-empty value" >&2
   exit 1
 }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || {
@@ -692,6 +712,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2
     exit 1
   }
+  [ "$LANDING_TARGET_SET" -eq 0 ] || {
+    echo "error: --relaunch reuses the task's recorded landing target; --landing-target cannot override it" >&2
+    exit 1
+  }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -724,6 +748,10 @@ else
       exit 1
       ;;
     esac
+    if [ "$MODE" != local-only ] && [ "$LANDING_TARGET_SET" -eq 1 ]; then
+      echo "error: --landing-target applies only to local-only ship spawns" >&2
+      exit 1
+    fi
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
@@ -731,6 +759,10 @@ else
     }
     [ "$YOLO_SET" -eq 0 ] || {
       echo "error: --yolo applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ "$LANDING_TARGET_SET" -eq 0 ] || {
+      echo "error: --landing-target applies only to local-only ship spawns" >&2
       exit 1
     }
   fi
@@ -1296,6 +1328,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  [ "$LANDING_TARGET_SET" -eq 0 ] || shared_args+=(--landing-target "$LANDING_TARGET_ARG")
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -2504,6 +2537,14 @@ else
   PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
   WT=""
   BRIEF="$DATA/$ID/brief.md"
+fi
+LANDING_TARGET=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" = local-only ]; then
+  LANDING_TARGET=$(fm_landing_target_resolve "$CONFIG" "$PROJ_ABS" "$LANDING_TARGET_ARG") || exit 1
+  if [ -n "$LANDING_TARGET" ]; then
+    fm_landing_target_require_branch "$PROJ_ABS" "$LANDING_TARGET" || exit 1
+    fm_landing_target_reject_default "$PROJ_ABS" "$LANDING_TARGET" || exit 1
+  fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || {
@@ -4078,6 +4119,7 @@ preserve_relaunch_meta() {
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
+  [ -z "$LANDING_TARGET" ] || echo "landing_target=$LANDING_TARGET"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
