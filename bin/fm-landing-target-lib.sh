@@ -36,7 +36,7 @@ fm_landing_target_valid() {
 }
 
 fm_landing_target_resolve() {
-  local config=$1 project=$2 explicit=${3:-} file line name mapped_name mapped_target found= seen_name
+  local config=$1 project=$2 explicit=${3:-} file line name mapped_name mapped_target found='' seen_name
   local -a seen_names=()
   file="$config/local-landing-targets"
   name=$(basename "$project") || return 1
