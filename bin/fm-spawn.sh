@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--landing-target <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
-#   spawn and refused on --scout and --secondmate spawns. --landing-target
-#   <branch> optionally overrides a configured local-only landing target for this
-#   task; it is recorded as landing_target= and must name a non-default local
-#   branch. config/local-landing-targets owns configured target syntax. Firstmate resolves both
+#   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
 #   standing posture as context, not as this task's answer, so a spawn never looks
-#   the mode up. A ship spawn additionally reads the brief's recorded
+#   the mode up. A local-only ship spawn resolves its landing branch from
+#   --landing-target <branch> and config/local-landing-targets, which must agree;
+#   a resolved target must name an existing non-default local branch, is recorded
+#   as landing_target=, starts the task worktree at that branch's tip, and is kept
+#   by a relaunch (docs/configuration.md "Local landing targets"). With neither,
+#   nothing is recorded and the default branch stays the landing branch. A ship spawn additionally reads the brief's recorded
 #   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
 #   instructions and the recorded task delivery cannot drift apart; a brief
 #   scaffolded before that line existed warns once and launches on the flag. A
@@ -2856,6 +2858,27 @@ freshen_spawn_worktree_base() { # <worktree>
   fi
 }
 
+# A task with a recorded landing target lands by fast-forward onto that local
+# branch, so its worker must start from that branch's tip rather than from the
+# default branch the pool was just refreshed to. The worktree is already proven
+# clean, and a detached checkout never moves any branch ref.
+base_spawn_worktree_on_landing_target() { # <worktree>
+  local worktree=$1 expected actual
+  expected=$(git -C "$worktree" rev-parse --verify --quiet "refs/heads/$LANDING_TARGET^{commit}" 2>/dev/null) || {
+    echo "error: landing target '$LANDING_TARGET' is not a local branch visible from worktree '$worktree'; refusing to launch from the wrong base" >&2
+    return 1
+  }
+  if ! git -C "$worktree" -c advice.detachedHead=false checkout --quiet --detach "$expected"; then
+    echo "error: could not start worktree '$worktree' from landing target '$LANDING_TARGET'; refusing to launch from the wrong base" >&2
+    return 1
+  fi
+  actual=$(git -C "$worktree" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+  if [ "$actual" != "$expected" ]; then
+    echo "error: worktree '$worktree' is at '${actual:-unknown}', not landing target '$LANDING_TARGET' ('$expected'); refusing to launch" >&2
+    return 1
+  fi
+}
+
 herdr_projection_meta_field_exact() { # <meta> <key>
   local meta=$1 key=$2 count
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
@@ -3588,6 +3611,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+  [ -z "$LANDING_TARGET" ] || base_spawn_worktree_on_landing_target "$WT" || exit 1
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,

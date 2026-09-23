@@ -272,6 +272,57 @@ test_promote_requires_and_records_the_delivery_contract() {
   pass "fm-promote: promotion requires the delivery contract and records it exactly once"
 }
 
+# A local-only promotion resolves its landing branch exactly as a local-only
+# spawn does, records it, and points the worker at that branch as its base.
+test_promote_records_a_configured_landing_target() {
+  local home proj meta out status instructions
+  home="$TMP_ROOT/promote-landing/home"
+  proj="$TMP_ROOT/promote-landing/projects/proj"
+  mkdir -p "$home/state" "$home/config"
+  fm_git_init_commit "$proj"
+  git -C "$proj" branch working main
+  meta="$home/state/promote-l1.meta"
+  instructions="$home/data/promote-l1/ship-instructions.md"
+  write_scout_meta() {
+    printf 'window=fm-promote-l1\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$proj" > "$meta"
+  }
+
+  write_brief "$home" promote-l1
+  write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-l1 --mode local-only --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "an unconfigured local-only promotion should succeed"$'\n'"$out"
+  assert_no_grep 'landing_target=' "$meta" "an unconfigured local-only promotion recorded a landing target"
+  assert_grep 'Return to a clean default-branch base' "$instructions" \
+    "an unconfigured local-only promotion changed the worker's base instruction"
+
+  write_brief "$home" promote-l1
+  write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" promote-l1 --mode direct-PR --yolo off --landing-target working 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a landing target on a direct-PR promotion should refuse"
+  assert_contains "$out" "applies only to local-only" "the misapplied landing target was not explained"
+  assert_grep 'kind=scout' "$meta" "a refused promotion changed the task record"
+
+  printf 'proj\tmain\n' > "$home/config/local-landing-targets"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-l1 --mode local-only --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a configured default-branch landing target should refuse promotion"
+  assert_contains "$out" "is the default branch" "the default-branch refusal was not explained"
+  assert_grep 'kind=scout' "$meta" "a refused promotion changed the task record"
+
+  printf 'proj\tworking\n' > "$home/config/local-landing-targets"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-l1 --mode local-only --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "a configured local-only promotion should succeed"$'\n'"$out"
+  assert_grep 'landing_target=working' "$meta" "the configured landing target was not recorded"
+  [ "$(grep -c '^landing_target=' "$meta")" = 1 ] || fail "promotion recorded more than one landing target"
+  assert_grep "local branch \`working\`" "$instructions" \
+    "the promoted worker was not told to start from its landing branch"
+  pass "fm-promote: a local-only promotion records a configured landing target and names it as the base"
+}
+
 # A symlink at state/<id>.meta is the containment hazard the shared publisher
 # refuses: promotion must not rewrite the symlink target in place.
 test_promote_refuses_a_symlinked_task_record() {
@@ -889,6 +940,7 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promote_refuses_a_symlinked_task_record
+test_promote_records_a_configured_landing_target
 test_promotion_delivers_the_real_definition_of_done
 test_project_mode_maps_the_conditional_policy
 test_spawn_and_promote_require_filled_task_subsections

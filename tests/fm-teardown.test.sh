@@ -800,6 +800,81 @@ test_local_only_unmerged_configured_target_refuses() {
   pass "local-only worktree unmerged from its configured branch is refused"
 }
 
+# Ancestry of the recorded target never excuses uncommitted work: a merged
+# branch with a dirty tree still refuses, and the dirty file survives.
+test_local_only_configured_target_dirty_refuses() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dirty-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into configured target"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+  printf 'uncommitted\n' > "$case_dir/wt/pending.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "dirty-working-branch: teardown should refuse uncommitted work"
+  grep -q 'uncommitted changes present' "$case_dir/stderr" \
+    || fail "dirty-working-branch: refusal did not name the uncommitted changes"
+  [ -f "$case_dir/wt/pending.txt" ] || fail "dirty-working-branch: uncommitted work was removed"
+  pass "local-only worktree merged into its configured branch but dirty is refused"
+}
+
+# A record carrying two landing targets cannot prove where the work landed, so
+# teardown refuses even when one of them contains the work.
+test_local_only_ambiguous_landing_target_refuses() {
+  local case_dir rc wt_head
+  case_dir=$(make_case ambiguous-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' 'landing_target=other' \
+    >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  git -C "$case_dir/project" branch other main
+  wt_commit "$case_dir" "merged into both"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+  git -C "$case_dir/project" update-ref refs/heads/other "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "ambiguous-working-branch: teardown should refuse an ambiguous record"
+  grep -q 'ambiguous or invalid recorded landing target' "$case_dir/stderr" \
+    || fail "ambiguous-working-branch: refusal did not name the ambiguous record"
+  [ -d "$case_dir/wt" ] || fail "ambiguous-working-branch: worktree was removed"
+  pass "local-only worktree with an ambiguous recorded landing target is refused"
+}
+
+# Work landed only on the default branch is not landed for a task whose record
+# names a different landing branch.
+test_local_only_configured_target_ignores_default_branch() {
+  local case_dir rc wt_head
+  case_dir=$(make_case default-not-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into main only"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "default-not-working-branch: teardown should refuse work landed only on main"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "default-not-working-branch: refusal did not name the recorded target"
+  pass "local-only work landed only on the default branch is refused when another target is recorded"
+}
+
 test_local_only_merged_to_local_main_allows() {
   local case_dir rc
   case_dir=$(make_case merged-main)
@@ -3711,6 +3786,9 @@ test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_configured_target_allows
 test_local_only_unmerged_configured_target_refuses
+test_local_only_configured_target_dirty_refuses
+test_local_only_ambiguous_landing_target_refuses
+test_local_only_configured_target_ignores_default_branch
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses

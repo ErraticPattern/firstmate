@@ -68,7 +68,8 @@
 # Uncommitted changes are never landed.
 # local-only projects additionally accept work merged into their recorded local
 # landing target (or the default branch when no target was recorded). A recorded
-# target requires direct ancestry proof, never content equivalence.
+# target requires direct ancestry proof, never content equivalence, and an
+# ambiguous or invalid recorded target refuses.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -962,7 +963,8 @@ elif [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ]; then
   exit 1
 fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
-LANDING_TARGET=$(fm_meta_get "$META" landing_target)
+LANDING_TARGET_STATUS=0
+LANDING_TARGET=$(fm_landing_target_from_meta "$META" 2>/dev/null) || LANDING_TARGET_STATUS=$?
 [ -n "$MODE" ] || MODE=no-mistakes
 
 # A record accepted as a legacy incarnation (no spawn_gen, --legacy-record
@@ -1693,14 +1695,19 @@ validate_worktree_teardown_safety() {
   fi
   unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
 
-  if [ -n "$unpushed" ] && [ "$MODE" = local-only ] && [ -n "$LANDING_TARGET" ]; then
+  if [ -n "$unpushed" ] && [ "$MODE" = local-only ] && { [ -n "$LANDING_TARGET" ] || [ "$LANDING_TARGET_STATUS" -ne 0 ]; }; then
     target=$LANDING_TARGET
+    if [ "$LANDING_TARGET_STATUS" -ne 0 ]; then
+      echo "REFUSED: local-only worktree $WT has an ambiguous or invalid recorded landing target; cannot prove its work landed." >&2
+      return 1
+    fi
     if ! fm_landing_target_require_branch "$PROJ" "$target"; then
       echo "REFUSED: local-only worktree $WT cannot verify its recorded landing target '$target'." >&2
       return 1
     fi
-    if ! git -C "$WT" merge-base --is-ancestor HEAD "refs/heads/$target"; then
+    if [ -n "$dirty" ] || ! git -C "$WT" merge-base --is-ancestor HEAD "refs/heads/$target"; then
       echo "REFUSED: local-only worktree $WT has work not yet merged into recorded landing target $target and not on any remote." >&2
+      [ -n "$dirty" ] && echo "uncommitted changes present" >&2
       echo "Merge the branch into local $target first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
       return 1
     fi

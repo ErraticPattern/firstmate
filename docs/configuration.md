@@ -133,23 +133,18 @@ Every routine firstmate backlog command therefore runs through [`bin/fm-tasks-ax
 ## Local landing targets (config/local-landing-targets)
 
 A local-only task normally lands on the project's default branch, exactly as it did before this setting existed.
-To declare a non-default working branch, create the local gitignored `config/local-landing-targets` file with one tab-separated mapping per line:
-
-```text
-dotfiles\tsway-debian-stabilization
-```
-
-The first field is the project clone basename and the second is its local branch name.
-Blank lines and lines beginning with `#` are ignored.
-Each project may appear once.
-The configured target must exist locally and must not be the detected default branch.
-Malformed, unreadable, unsafe, duplicate, or contradictory mappings refuse a local-only launch rather than guessing.
-At intake, `fm-spawn.sh --landing-target <branch>` may provide an explicit target for one local-only task.
-An explicit target must agree with any configured mapping, is recorded as `landing_target=` in that task's metadata, and survives recovery relaunches.
+To declare that a local-only project lives on a different long-lived branch, create the local gitignored `config/local-landing-targets` file with one mapping per line: the project clone basename, one tab character, and the local branch name, for example `dotfiles<TAB>sway-debian-stabilization`.
+Blank lines and lines beginning with `#` are ignored, and each project may appear once.
+The file is local to this home and is not inherited by secondmates, because local-only work stays with the main first mate.
+At intake, `fm-spawn.sh --landing-target <branch>` or `fm-promote.sh --landing-target <branch>` may name the target explicitly for one local-only task, and it must agree with any configured mapping.
+A resolved target must be an existing local branch and must not be the detected default branch.
+Malformed, unreadable, duplicate, or contradictory mappings, a missing branch, or a target that is the default branch refuse the spawn or promotion rather than guessing.
+A resolved target is recorded as `landing_target=` in the task's metadata and survives recovery relaunches; the spawn also starts the task's worktree at that branch's tip, and a promotion tells the worker to rebase onto it.
 When no target is configured or passed, no metadata field is written and the existing default-branch behavior is unchanged.
-`bin/fm-merge-local.sh` fast-forwards only the recorded target while its primary checkout is clean and checked out on that target.
-`bin/fm-teardown.sh` treats an unpushed local-only task with a recorded target as landed only when its worktree HEAD is an ancestor of that target.
-The script headers own parsing and exact refusal mechanics.
+`bin/fm-merge-local.sh` fast-forwards only the recorded branch, only while the primary checkout is clean and checked out on it, and its success line names the branch that moved.
+`bin/fm-teardown.sh` treats an unpushed local-only task with a recorded target as landed only when the task has no uncommitted changes and its worktree HEAD is an ancestor of that branch; content equivalence and the default branch never count.
+Both refuse a record whose landing target is repeated, empty, or not a valid branch name.
+[`bin/fm-landing-target-lib.sh`](../bin/fm-landing-target-lib.sh) owns parsing and validation, and each script header owns its exact refusal mechanics.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
