@@ -38,6 +38,12 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
+# Both take an optional third <landing-target> argument for a local-only task
+# with an explicit landing branch (bin/fm-landing-target-lib.sh): the worker is
+# told to rebase onto and land on that branch, and the contract line becomes
+# "Delivery contract: mode=local-only landing_target=<branch>" so bin/fm-spawn.sh
+# can refuse a brief that disagrees with the target it records. Without one the
+# rendered text is the default-branch contract.
 
 fm_brief_worker_role() {  # <state-dir> <task-id>
   local state=$1 task_id=$2
@@ -55,14 +61,22 @@ Project instructions still govern the work wherever they do not conflict with th
 EOF
 }
 
-fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id>
-  local mode=$1 id=$2
+fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [<landing-target>]
+  local mode=$1 id=$2 target=${3:-}
+  if [ -n "$target" ] && [ "$mode" != local-only ]; then
+    echo "error: fm_ship_rule_one: a landing target applies only to local-only" >&2
+    return 1
+  fi
   case "$mode" in
     direct-PR)
       printf '%s\n' "1. Never push to the default branch (push only your \`fm/$id\` branch). Never merge a PR."
       ;;
     local-only)
-      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`fm/$id\` branch; firstmate handles the merge into local \`main\`."
+      if [ -n "$target" ]; then
+        printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`fm/$id\` branch; firstmate handles the merge into local \`$target\`, this task's landing branch."
+      else
+        printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`fm/$id\` branch; firstmate handles the merge into local \`main\`."
+      fi
       ;;
     no-mistakes)
       printf '%s\n' '1. Never push to the default branch. Never merge a PR.'
@@ -232,8 +246,12 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id>
-  local mode=$1 id=$2
+fm_dod_block() {  # <mode> <task-id> [<landing-target>]
+  local mode=$1 id=$2 target=${3:-}
+  if [ -n "$target" ] && [ "$mode" != local-only ]; then
+    echo "error: fm_dod_block: a landing target applies only to local-only" >&2
+    return 1
+  fi
   case "$mode" in
     direct-PR)
       cat <<EOF
@@ -246,6 +264,18 @@ Do NOT run /no-mistakes. The configured merge authority decides whether to merge
 EOF
       ;;
     local-only)
+      if [ -n "$target" ]; then
+        cat <<EOF
+# Definition of done
+Delivery contract: mode=local-only landing_target=$target
+This task ships **local-only**: no remote, no PR, no pipeline.
+The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
+This task lands on local branch \`$target\`, not on the default branch. Keep your branch a clean fast-forward onto \`$target\` - if \`$target\` has advanced, rebase onto it so the eventual merge stays a fast-forward. Never rebase onto the default branch.
+When it is implemented and committed, append \`done: ready in branch fm/$id\` to the status file and stop.
+The configured merge authority approves the ready branch, then firstmate merges it into local \`$target\` through the guarded fast-forward path.
+EOF
+        return 0
+      fi
       cat <<EOF
 # Definition of done
 Delivery contract: mode=local-only

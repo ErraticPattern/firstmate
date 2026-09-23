@@ -765,6 +765,18 @@ test_local_only_configured_target_is_recorded_and_used_as_base() {
   target_sha=$(add_working_branch)
   printf 'project\tsway-debian-stabilization\n' > "$HOME_DIR/config/local-landing-targets"
 
+  printf '\n# Definition of done\nDelivery contract: mode=local-only\n' >> "$HOME_DIR/data/$id/brief.md"
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief that lands on the default branch launched a configured local-only task"$'\n'"$out"
+  assert_contains "$out" "landing target mismatch" "the brief/target mismatch was not explained"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused brief/target mismatch published task metadata"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] \
+    || fail "a refused brief/target mismatch moved the pooled worktree"
+
+  sed -i.bak 's/^Delivery contract: mode=local-only$/Delivery contract: mode=local-only landing_target=sway-debian-stabilization/' \
+    "$HOME_DIR/data/$id/brief.md"
+  rm -f "$HOME_DIR/data/$id/brief.md.bak"
   out=$(run_spawn "$id" --mode local-only --yolo off)
   status=$?
   expect_code 0 "$status" "a configured local-only spawn should launch"$'\n'"$out"

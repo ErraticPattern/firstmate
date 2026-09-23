@@ -69,7 +69,12 @@
 # local-only projects additionally accept work merged into their recorded local
 # landing target (or the default branch when no target was recorded). A recorded
 # target requires direct ancestry proof, never content equivalence, and an
-# ambiguous or invalid recorded target refuses.
+# ambiguous or invalid recorded target refuses. A local-only record with no
+# landing_target= line (spawned before the field existed) falls back to this
+# home's config/local-landing-targets mapping for its project, held to the same
+# existing-branch and ancestry proof; an unreadable, malformed, duplicate, or
+# contradictory configuration refuses, and an absent file or unmapped project
+# keeps the default-branch check.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -965,6 +970,12 @@ fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 LANDING_TARGET_STATUS=0
 LANDING_TARGET=$(fm_landing_target_from_meta "$META" 2>/dev/null) || LANDING_TARGET_STATUS=$?
+LANDING_TARGET_SOURCE=recorded
+LANDING_TARGET_CONFIG_STATUS=0
+if [ "$MODE" = local-only ] && [ "$LANDING_TARGET_STATUS" -eq 0 ] && [ -z "$LANDING_TARGET" ]; then
+  LANDING_TARGET_SOURCE=configured
+  LANDING_TARGET=$(fm_landing_target_resolve "$CONFIG" "$PROJ" "" 2>/dev/null) || LANDING_TARGET_CONFIG_STATUS=$?
+fi
 [ -n "$MODE" ] || MODE=no-mistakes
 
 # A record accepted as a legacy incarnation (no spawn_gen, --legacy-record
@@ -1695,18 +1706,22 @@ validate_worktree_teardown_safety() {
   fi
   unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
 
-  if [ -n "$unpushed" ] && [ "$MODE" = local-only ] && { [ -n "$LANDING_TARGET" ] || [ "$LANDING_TARGET_STATUS" -ne 0 ]; }; then
+  if [ -n "$unpushed" ] && [ "$MODE" = local-only ] && { [ -n "$LANDING_TARGET" ] || [ "$LANDING_TARGET_STATUS" -ne 0 ] || [ "$LANDING_TARGET_CONFIG_STATUS" -ne 0 ]; }; then
     target=$LANDING_TARGET
     if [ "$LANDING_TARGET_STATUS" -ne 0 ]; then
       echo "REFUSED: local-only worktree $WT has an ambiguous or invalid recorded landing target; cannot prove its work landed." >&2
       return 1
     fi
+    if [ "$LANDING_TARGET_CONFIG_STATUS" -ne 0 ]; then
+      echo "REFUSED: local-only worktree $WT records no landing target and the local landing-target configuration at $CONFIG/local-landing-targets is unreadable, malformed, duplicate, or contradictory; cannot prove its work landed." >&2
+      return 1
+    fi
     if ! fm_landing_target_require_branch "$PROJ" "$target"; then
-      echo "REFUSED: local-only worktree $WT cannot verify its recorded landing target '$target'." >&2
+      echo "REFUSED: local-only worktree $WT cannot verify its $LANDING_TARGET_SOURCE landing target '$target'." >&2
       return 1
     fi
     if [ -n "$dirty" ] || ! git -C "$WT" merge-base --is-ancestor HEAD "refs/heads/$target"; then
-      echo "REFUSED: local-only worktree $WT has work not yet merged into recorded landing target $target and not on any remote." >&2
+      echo "REFUSED: local-only worktree $WT has work not yet merged into $LANDING_TARGET_SOURCE landing target $target and not on any remote." >&2
       [ -n "$dirty" ] && echo "uncommitted changes present" >&2
       echo "Merge the branch into local $target first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
       return 1

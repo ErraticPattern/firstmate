@@ -12,7 +12,9 @@
 #   --landing-target <branch> and config/local-landing-targets, which must agree;
 #   a resolved target must name an existing non-default local branch, is recorded
 #   as landing_target=, starts the task worktree at that branch's tip, and is kept
-#   by a relaunch (docs/configuration.md "Local landing targets"). With neither,
+#   by a relaunch (docs/configuration.md "Local landing targets"). The brief's
+#   "Delivery contract:" line must record the same landing_target=, or none when
+#   no target resolves, or the spawn refuses. With neither,
 #   nothing is recorded and the default branch stays the landing branch. A ship spawn additionally reads the brief's recorded
 #   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
 #   instructions and the recorded task delivery cannot drift apart; a brief
@@ -2633,6 +2635,13 @@ if [ "$KIND" = ship ]; then
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
+  fi
+  if [ "$RELAUNCH" -eq 0 ] && [ "$MODE" = local-only ] && [ -n "$BRIEF_MODE" ]; then
+    BRIEF_LANDING_TARGET=$(sed -n 's/^Delivery contract: mode=[^ ]* landing_target=\([^ ]*\)$/\1/p' "$BRIEF" | head -n 1)
+    if [ "$BRIEF_LANDING_TARGET" != "$LANDING_TARGET" ]; then
+      echo "error: landing target mismatch for $ID: the brief lands on '${BRIEF_LANDING_TARGET:-the default branch}' but this task resolves '${LANDING_TARGET:-the default branch}'; re-scaffold the brief with bin/fm-brief.sh${LANDING_TARGET:+ --landing-target $LANDING_TARGET} so the worker's instructions and the task record agree" >&2
+      exit 1
+    fi
   fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An

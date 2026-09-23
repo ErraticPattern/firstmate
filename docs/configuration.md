@@ -137,13 +137,16 @@ To declare that a local-only project lives on a different long-lived branch, cre
 Blank lines and lines beginning with `#` are ignored, and each project may appear once.
 The file is local to this home and is not inherited by secondmates, because local-only work stays with the main first mate.
 At intake, `fm-spawn.sh --landing-target <branch>` or `fm-promote.sh --landing-target <branch>` may name the target explicitly for one local-only task, and it must agree with any configured mapping.
+Scaffold the task's brief with `fm-brief.sh --mode local-only --landing-target <branch>` whenever a target applies, so the worker is told to start from, rebase onto, and land on that branch; the brief records it in its `Delivery contract:` line, and `fm-spawn.sh` refuses a brief whose recorded target differs from the one it resolves, including a brief that records none.
 A resolved target must be an existing local branch and must not be the detected default branch.
 Malformed, unreadable, duplicate, or contradictory mappings, a missing branch, or a target that is the default branch refuse the spawn or promotion rather than guessing.
 A resolved target is recorded as `landing_target=` in the task's metadata and survives recovery relaunches; the spawn also starts the task's worktree at that branch's tip, and a promotion tells the worker to rebase onto it.
 When no target is configured or passed, no metadata field is written and the existing default-branch behavior is unchanged.
 `bin/fm-merge-local.sh` fast-forwards only the recorded branch, only while the primary checkout is clean and checked out on it, and its success line names the branch that moved.
+`bin/fm-review-diff.sh` reviews a task with a recorded target against that local branch.
 `bin/fm-teardown.sh` treats an unpushed local-only task with a recorded target as landed only when the task has no uncommitted changes and its worktree HEAD is an ancestor of that branch; content equivalence and the default branch never count.
-Both refuse a record whose landing target is repeated, empty, or not a valid branch name.
+A local-only record with no `landing_target=` line, such as one spawned before the field existed, falls back to this file's mapping for its project at teardown and is held to the same existing-branch and ancestry proof; an unreadable, malformed, duplicate, or contradictory file refuses that teardown, and an absent file or unmapped project keeps the default-branch check.
+These scripts refuse a record whose landing target is repeated, empty, or not a valid branch name.
 [`bin/fm-landing-target-lib.sh`](../bin/fm-landing-target-lib.sh) owns parsing and validation, and each script header owns its exact refusal mechanics.
 
 ## Runtime backend (config/backend / FM_BACKEND)

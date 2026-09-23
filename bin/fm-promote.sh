@@ -228,13 +228,13 @@ The mode-specific Definition of done below is the current delivery contract.
 
 # Current ship safety rule
 EOF
-  fm_ship_rule_one "$MODE" "$ID"
+  fm_ship_rule_one "$MODE" "$ID" "$LANDING_TARGET"
   if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
     printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
-  fm_dod_block "$MODE" "$ID"
+  fm_dod_block "$MODE" "$ID" "$LANDING_TARGET"
 }
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }

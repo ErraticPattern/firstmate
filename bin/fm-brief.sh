@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--landing-target <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -51,6 +51,12 @@
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
+# --landing-target <branch> applies only to local-only ship briefs: it names the
+# task's explicit landing branch (docs/configuration.md "Local landing targets"),
+# so the setup, rule 1, and definition of done tell the worker to start from,
+# rebase onto, and land on that branch, and the contract line records it as
+# landing_target=<branch>. bin/fm-spawn.sh refuses a brief whose recorded target
+# differs from the one it resolves, including a missing one.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
@@ -94,6 +100,8 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-landing-target-lib.sh
+. "$SCRIPT_DIR/fm-landing-target-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 CREWMATE_PAUSE_WAIT_EXAMPLES='an upstream release, a rate-limit reset, a scheduled window, or your own validation round'
 
@@ -126,6 +134,8 @@ HERDR_LAB=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
+LANDING_TARGET=
+LANDING_TARGET_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -135,6 +145,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      landing-target) LANDING_TARGET=$a; LANDING_TARGET_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -147,6 +158,8 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --landing-target) want_value=landing-target ;;
+    --landing-target=*) LANDING_TARGET=${a#--landing-target=}; LANDING_TARGET_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -173,6 +186,16 @@ if [ "$KIND" = ship ]; then
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
   exit 1
+fi
+if [ "$LANDING_TARGET_SET" -eq 1 ]; then
+  [ "$KIND" = ship ] && [ "$MODE" = local-only ] || {
+    echo "error: --landing-target applies only to local-only ship briefs" >&2
+    exit 1
+  }
+  fm_landing_target_valid "$LANDING_TARGET" || {
+    echo "error: invalid landing target '$LANDING_TARGET'" >&2
+    exit 1
+  }
 fi
 ID=${POS[0]}
 
@@ -445,8 +468,10 @@ case "$MODE" in
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     ;;
 esac
-RULE1=$(fm_ship_rule_one "$MODE" "$ID") || exit 1
-DOD=$(fm_dod_block "$MODE" "$ID") || exit 1
+RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$LANDING_TARGET") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$LANDING_TARGET") || exit 1
+SETUP_BASE="a clean default branch"
+[ -z "$LANDING_TARGET" ] || SETUP_BASE="the current tip of local branch \`$LANDING_TARGET\`, this task's landing branch"
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -456,7 +481,7 @@ $TASK_SECTION
 $HERDR_SECTION
 
 # Setup
-You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
+You are in a disposable git worktree of $REPO, at a detached HEAD on $SETUP_BASE.
 
 **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from.
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.

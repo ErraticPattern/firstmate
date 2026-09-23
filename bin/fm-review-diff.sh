@@ -4,6 +4,9 @@
 # Pooled project clones do not keep their local default branch current, so this
 # helper compares remote-backed projects against origin/<default> after fetching
 # the default branch, and local-only projects against the local default branch.
+# A task that records landing_target= (bin/fm-landing-target-lib.sh owns its
+# validation) is compared against that existing local branch instead, addressed
+# as refs/heads/<target>; an ambiguous, invalid, or missing target refuses.
 # When state/<id>.meta records pr= (URL or number) for an open PR, the compare
 # side is ALWAYS a freshly fetched refs/pull/<n>/head by default so review stays
 # current after no-mistakes fix rounds push to the PR. A recorded pr_head= is
@@ -19,6 +22,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 "$FM_ROOT/bin/fm-guard.sh" || true
+# shellcheck source=bin/fm-landing-target-lib.sh
+. "$SCRIPT_DIR/fm-landing-target-lib.sh"
 
 usage() {
   echo "usage: fm-review-diff.sh <task-id> [--stat]" >&2
@@ -65,7 +70,12 @@ default_branch() {
   return 1
 }
 
-DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
+LANDING_TARGET=$(fm_landing_target_from_meta "$META") || exit 1
+if [ -n "$LANDING_TARGET" ]; then
+  fm_landing_target_require_branch "$PROJ" "$LANDING_TARGET" || exit 1
+else
+  DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
+fi
 
 BRANCH="fm/$ID"
 if ! git -C "$WT" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
@@ -133,7 +143,9 @@ if [ -n "$PR_URL" ]; then
   fi
 fi
 
-if git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
+if [ -n "$LANDING_TARGET" ]; then
+  BASE="refs/heads/$LANDING_TARGET"
+elif git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
   # Update the remote-tracking ref itself; a bare single-branch fetch can leave
   # origin/<default> stale on some Git versions and only refresh FETCH_HEAD.
   git -C "$WT" fetch origin "+refs/heads/$DEFAULT:refs/remotes/origin/$DEFAULT" --quiet

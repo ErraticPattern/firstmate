@@ -320,6 +320,14 @@ test_promote_records_a_configured_landing_target() {
   [ "$(grep -c '^landing_target=' "$meta")" = 1 ] || fail "promotion recorded more than one landing target"
   assert_grep "local branch \`working\`" "$instructions" \
     "the promoted worker was not told to start from its landing branch"
+  assert_grep 'Delivery contract: mode=local-only landing_target=working' "$instructions" \
+    "the promoted contract did not record its landing branch"
+  assert_grep "if \`working\` has advanced, rebase onto it" "$instructions" \
+    "the promoted worker was not told to rebase onto its landing branch"
+  assert_no_grep "if \`main\` has advanced" "$instructions" \
+    "the promoted worker was still told to rebase onto the default branch"
+  assert_grep "firstmate handles the merge into local \`working\`" "$instructions" \
+    "the promoted safety rule did not name the landing branch"
   pass "fm-promote: a local-only promotion records a configured landing target and names it as the base"
 }
 
