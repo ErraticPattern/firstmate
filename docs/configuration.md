@@ -144,7 +144,7 @@ A resolved target is recorded as `landing_target=` in the task's metadata and su
 When no target is configured or passed, no metadata field is written and the existing default-branch behavior is unchanged.
 `bin/fm-merge-local.sh` fast-forwards only the recorded branch, only while the primary checkout is clean and checked out on it, and its success line names the branch that moved.
 `bin/fm-review-diff.sh` reviews a task with a recorded target against that local branch.
-`bin/fm-teardown.sh` treats an unpushed local-only task with a recorded target as landed only when the task has no uncommitted changes and its worktree HEAD is an ancestor of that branch; content equivalence and the default branch never count.
+`bin/fm-teardown.sh` treats every local-only task with a recorded target as landed only when the task has no uncommitted changes and its worktree HEAD is an ancestor of that branch; content equivalence never counts in place of that ancestry proof.
 A local-only record with no `landing_target=` line, such as one spawned before the field existed, falls back to this file's mapping for its project at teardown and is held to the same existing-branch and ancestry proof; an unreadable, malformed, duplicate, or contradictory file refuses that teardown, and an absent file or unmapped project keeps the default-branch check.
 Teardown closes such a task's backlog item with the note `local <branch>` naming that recorded or configured target; a task without one keeps `local main`.
 These scripts refuse a record whose landing target is repeated, empty, or not a valid branch name.
