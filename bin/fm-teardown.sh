@@ -1416,7 +1416,8 @@ work_is_landed() {
 }
 
 # The completion links this teardown already holds locally. A scout's
-# deliverable is its report, a local-only ship lands on local main, and every
+# deliverable is its report, a local-only ship lands on its landing target
+# (local main when none resolves), and every
 # other ship carries the PR recorded on its own record.
 BACKLOG_DONE_ARGS=()
 backlog_done_args() {
@@ -1429,7 +1430,7 @@ backlog_done_args() {
       ;;
     *)
       if [ "$MODE" = local-only ]; then
-        BACKLOG_DONE_ARGS=(--note "local main")
+        BACKLOG_DONE_ARGS=(--note "local ${LANDING_TARGET:-main}")
       elif [ -n "$PR_URL" ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
