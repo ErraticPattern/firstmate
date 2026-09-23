@@ -70,6 +70,8 @@ test_ambiguous_configuration_refuses() {
   for lines in \
     $'ambiguous\tsway-debian-stabilization\nambiguous\tother' \
     $'unrelated\tone\nunrelated\ttwo\nambiguous\tsway-debian-stabilization' \
+    $'ambiguous\t\tsway-debian-stabilization' \
+    $'ambiguous\tsway-debian-stabilization\t' \
     'ambiguous sway-debian-stabilization' \
     $'ambiguous\tsway-debian-stabilization\textra' \
     $'ambiguous\tbad..name' \

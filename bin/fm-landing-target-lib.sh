@@ -36,7 +36,7 @@ fm_landing_target_valid() {
 }
 
 fm_landing_target_resolve() {
-  local config=$1 project=$2 explicit=${3:-} file name mapped_name mapped_target remainder found= seen_name
+  local config=$1 project=$2 explicit=${3:-} file line name mapped_name mapped_target found= seen_name
   local -a seen_names=()
   file="$config/local-landing-targets"
   name=$(basename "$project") || return 1
@@ -53,9 +53,19 @@ fm_landing_target_resolve() {
     echo "error: cannot read local landing-target configuration at $file" >&2
     return 1
   fi
-  while IFS=$'\t' read -r mapped_name mapped_target remainder || [ -n "$mapped_name$mapped_target$remainder" ]; do
-    case "$mapped_name" in ''|'#'*) continue ;; esac
-    if [ -z "$mapped_target" ] || [ -n "$remainder" ] || ! fm_landing_target_valid "$mapped_target"; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    case "$line" in
+      *$'\t'*)
+        mapped_name=${line%%$'\t'*}
+        mapped_target=${line#*$'\t'}
+        ;;
+      *)
+        echo "error: invalid local landing-target configuration at $file" >&2
+        return 1
+        ;;
+    esac
+    if [ -z "$mapped_name" ] || [ -z "$mapped_target" ] || [[ $mapped_target == *$'\t'* ]] || ! fm_landing_target_valid "$mapped_target"; then
       echo "error: invalid local landing-target configuration at $file" >&2
       return 1
     fi
