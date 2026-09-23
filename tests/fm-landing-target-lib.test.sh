@@ -69,6 +69,7 @@ test_ambiguous_configuration_refuses() {
   project=$(make_project ambiguous)
   for lines in \
     $'ambiguous\tsway-debian-stabilization\nambiguous\tother' \
+    $'unrelated\tone\nunrelated\ttwo\nambiguous\tsway-debian-stabilization' \
     'ambiguous sway-debian-stabilization' \
     $'ambiguous\tsway-debian-stabilization\textra' \
     $'ambiguous\tbad..name' \

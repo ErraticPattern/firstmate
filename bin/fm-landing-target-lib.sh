@@ -36,7 +36,8 @@ fm_landing_target_valid() {
 }
 
 fm_landing_target_resolve() {
-  local config=$1 project=$2 explicit=${3:-} file name mapped_name mapped_target remainder found=
+  local config=$1 project=$2 explicit=${3:-} file name mapped_name mapped_target remainder found= seen_name
+  local -a seen_names=()
   file="$config/local-landing-targets"
   name=$(basename "$project") || return 1
 
@@ -58,12 +59,14 @@ fm_landing_target_resolve() {
       echo "error: invalid local landing-target configuration at $file" >&2
       return 1
     fi
-    [ "$mapped_name" = "$name" ] || continue
-    if [ -n "$found" ]; then
-      echo "error: contradictory local landing-target configuration for $name at $file" >&2
-      return 1
-    fi
-    found=$mapped_target
+    for seen_name in "${seen_names[@]}"; do
+      if [ "$seen_name" = "$mapped_name" ]; then
+        echo "error: contradictory local landing-target configuration at $file" >&2
+        return 1
+      fi
+    done
+    seen_names+=("$mapped_name")
+    [ "$mapped_name" != "$name" ] || found=$mapped_target
   done < "$file"
   if [ -n "$explicit" ] && [ -n "$found" ] && [ "$explicit" != "$found" ]; then
     echo "error: explicit landing target '$explicit' contradicts configured target '$found' for $name" >&2
