@@ -875,6 +875,28 @@ test_local_only_configured_target_ignores_default_branch() {
   pass "local-only work landed only on the default branch is refused when another target is recorded"
 }
 
+test_local_only_remote_reachable_work_missing_target_refuses() {
+  local case_dir rc
+  case_dir=$(make_case remote-reachable-not-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "pushed but not merged into target"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin fm/task-x1
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "remote-reachable-not-working-branch: teardown should refuse work absent from its recorded target"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "remote-reachable-not-working-branch: refusal did not name the recorded target"
+  [ -d "$case_dir/wt" ] || fail "remote-reachable-not-working-branch: worktree was removed"
+  pass "local-only remote-reachable work absent from its recorded target is refused"
+}
+
 # A local-only record spawned before landing_target= existed falls back to this
 # home's config/local-landing-targets mapping, held to the same ancestry proof.
 test_local_only_unrecorded_target_uses_configured_mapping() {
@@ -3890,6 +3912,7 @@ test_local_only_unmerged_configured_target_refuses
 test_local_only_configured_target_dirty_refuses
 test_local_only_ambiguous_landing_target_refuses
 test_local_only_configured_target_ignores_default_branch
+test_local_only_remote_reachable_work_missing_target_refuses
 test_local_only_unrecorded_target_uses_configured_mapping
 test_local_only_unrecorded_target_mapping_refusals
 test_local_only_unrecorded_target_bad_or_absent_config

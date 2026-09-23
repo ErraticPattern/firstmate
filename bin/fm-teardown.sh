@@ -1707,7 +1707,7 @@ validate_worktree_teardown_safety() {
   fi
   unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
 
-  if [ -n "$unpushed" ] && [ "$MODE" = local-only ] && { [ -n "$LANDING_TARGET" ] || [ "$LANDING_TARGET_STATUS" -ne 0 ] || [ "$LANDING_TARGET_CONFIG_STATUS" -ne 0 ]; }; then
+  if [ "$MODE" = local-only ] && { [ -n "$LANDING_TARGET" ] || [ "$LANDING_TARGET_STATUS" -ne 0 ] || [ "$LANDING_TARGET_CONFIG_STATUS" -ne 0 ]; }; then
     target=$LANDING_TARGET
     if [ "$LANDING_TARGET_STATUS" -ne 0 ]; then
       echo "REFUSED: local-only worktree $WT has an ambiguous or invalid recorded landing target; cannot prove its work landed." >&2
@@ -1722,9 +1722,9 @@ validate_worktree_teardown_safety() {
       return 1
     fi
     if [ -n "$dirty" ] || ! git -C "$WT" merge-base --is-ancestor HEAD "refs/heads/$target"; then
-      echo "REFUSED: local-only worktree $WT has work not yet merged into $LANDING_TARGET_SOURCE landing target $target and not on any remote." >&2
+      echo "REFUSED: local-only worktree $WT has work not yet merged into $LANDING_TARGET_SOURCE landing target $target." >&2
       [ -n "$dirty" ] && echo "uncommitted changes present" >&2
-      echo "Merge the branch into local $target first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
+      echo "Merge the branch into local $target first (bin/fm-merge-local.sh after the captain approves), or get the captain's explicit OK to discard, then --force." >&2
       return 1
     fi
   elif [ -n "$unpushed" ] && [ "$MODE" = local-only ]; then
