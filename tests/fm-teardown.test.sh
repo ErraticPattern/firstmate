@@ -761,6 +761,243 @@ test_local_only_truly_unpushed_refuses() {
   pass "local-only worktree with truly unpushed work is refused (safety preserved)"
 }
 
+test_local_only_merged_to_configured_target_allows() {
+  local case_dir rc wt_head
+  case_dir=$(make_case merged-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into configured target"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "merged-working-branch: teardown should accept work merged into its recorded target"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "merged-working-branch: teardown printed a REFUSED line"
+  pass "local-only worktree with work merged into its configured branch is torn down"
+}
+
+test_local_only_unmerged_configured_target_refuses() {
+  local case_dir rc
+  case_dir=$(make_case unmerged-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "not merged into configured target"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unmerged-working-branch: teardown should refuse unlanded work"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "unmerged-working-branch: refusal did not name the recorded target"
+  pass "local-only worktree unmerged from its configured branch is refused"
+}
+
+# Ancestry of the recorded target never excuses uncommitted work: a merged
+# branch with a dirty tree still refuses, and the dirty file survives.
+test_local_only_configured_target_dirty_refuses() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dirty-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into configured target"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+  printf 'uncommitted\n' > "$case_dir/wt/pending.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "dirty-working-branch: teardown should refuse uncommitted work"
+  grep -q 'uncommitted changes present' "$case_dir/stderr" \
+    || fail "dirty-working-branch: refusal did not name the uncommitted changes"
+  [ -f "$case_dir/wt/pending.txt" ] || fail "dirty-working-branch: uncommitted work was removed"
+  pass "local-only worktree merged into its configured branch but dirty is refused"
+}
+
+# A record carrying two landing targets cannot prove where the work landed, so
+# teardown refuses even when one of them contains the work.
+test_local_only_ambiguous_landing_target_refuses() {
+  local case_dir rc wt_head
+  case_dir=$(make_case ambiguous-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' 'landing_target=other' \
+    >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  git -C "$case_dir/project" branch other main
+  wt_commit "$case_dir" "merged into both"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+  git -C "$case_dir/project" update-ref refs/heads/other "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "ambiguous-working-branch: teardown should refuse an ambiguous record"
+  grep -q 'ambiguous or invalid recorded landing target' "$case_dir/stderr" \
+    || fail "ambiguous-working-branch: refusal did not name the ambiguous record"
+  [ -d "$case_dir/wt" ] || fail "ambiguous-working-branch: worktree was removed"
+  pass "local-only worktree with an ambiguous recorded landing target is refused"
+}
+
+# Work landed only on the default branch is not landed for a task whose record
+# names a different landing branch.
+test_local_only_configured_target_ignores_default_branch() {
+  local case_dir rc wt_head
+  case_dir=$(make_case default-not-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "merged into main only"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "default-not-working-branch: teardown should refuse work landed only on main"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "default-not-working-branch: refusal did not name the recorded target"
+  pass "local-only work landed only on the default branch is refused when another target is recorded"
+}
+
+test_local_only_remote_reachable_work_missing_target_refuses() {
+  local case_dir rc
+  case_dir=$(make_case remote-reachable-not-working-branch)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'landing_target=sway-debian-stabilization' >> "$case_dir/state/task-x1.meta"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "pushed but not merged into target"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin fm/task-x1
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "remote-reachable-not-working-branch: teardown should refuse work absent from its recorded target"
+  grep -q 'recorded landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "remote-reachable-not-working-branch: refusal did not name the recorded target"
+  [ -d "$case_dir/wt" ] || fail "remote-reachable-not-working-branch: worktree was removed"
+  pass "local-only remote-reachable work absent from its recorded target is refused"
+}
+
+# A local-only record spawned before landing_target= existed falls back to this
+# home's config/local-landing-targets mapping, held to the same ancestry proof.
+test_local_only_unrecorded_target_uses_configured_mapping() {
+  local case_dir rc wt_head
+  case_dir=$(make_case unrecorded-mapped-branch)
+  write_meta "$case_dir" local-only ship
+  printf 'project\tsway-debian-stabilization\n' > "$case_dir/config/local-landing-targets"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "landed on the mapped working branch"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/sway-debian-stabilization "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "unrecorded-mapped-branch: teardown should accept work landed on the mapped branch"$'\n'"$(cat "$case_dir/stderr")"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "unrecorded-mapped-branch: teardown printed a REFUSED line"
+  grep -qx 'landing_target=sway-debian-stabilization' "$case_dir/state/task-x1.meta" 2>/dev/null \
+    && fail "unrecorded-mapped-branch: teardown edited the task metadata"
+  pass "local-only record without landing_target= closes via the configured mapping"
+}
+
+# The mapping is the only landing branch once it exists: work landed only on
+# the default branch still refuses, and so does a mapping naming no branch.
+test_local_only_unrecorded_target_mapping_refusals() {
+  local case_dir rc wt_head
+  case_dir=$(make_case unrecorded-mapped-default-only)
+  write_meta "$case_dir" local-only ship
+  printf 'project\tsway-debian-stabilization\n' > "$case_dir/config/local-landing-targets"
+  git -C "$case_dir/project" branch sway-debian-stabilization main
+  wt_commit "$case_dir" "landed on main only"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unrecorded-mapped-default-only: work landed only on main should refuse"
+  grep -q 'configured landing target sway-debian-stabilization' "$case_dir/stderr" \
+    || fail "unrecorded-mapped-default-only: refusal did not name the configured target"
+  [ -d "$case_dir/wt" ] || fail "unrecorded-mapped-default-only: worktree was removed"
+
+  case_dir=$(make_case unrecorded-mapped-missing)
+  write_meta "$case_dir" local-only ship
+  printf 'project\tno-such-branch\n' > "$case_dir/config/local-landing-targets"
+  wt_commit "$case_dir" "work"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unrecorded-mapped-missing: a mapping naming no branch should refuse"
+  grep -q "cannot verify its configured landing target 'no-such-branch'" "$case_dir/stderr" \
+    || fail "unrecorded-mapped-missing: refusal did not name the missing configured target"
+  [ -d "$case_dir/wt" ] || fail "unrecorded-mapped-missing: worktree was removed"
+  pass "local-only record without landing_target= refuses unlanded or unverifiable mapped work"
+}
+
+# An unusable configuration cannot prove anything, so it refuses even when the
+# default branch contains the work; no configuration keeps the default check.
+test_local_only_unrecorded_target_bad_or_absent_config() {
+  local case_dir rc wt_head config
+  for config in contradictory unreadable; do
+    case_dir=$(make_case "unrecorded-config-$config")
+    write_meta "$case_dir" local-only ship
+    case "$config" in
+      contradictory)
+        printf 'project\tsway-debian-stabilization\nproject\tother\n' > "$case_dir/config/local-landing-targets" ;;
+      unreadable)
+        mkdir "$case_dir/config/local-landing-targets" ;;
+    esac
+    wt_commit "$case_dir" "landed on main"
+    wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "unrecorded-config-$config: an unusable mapping should refuse"
+    grep -q "local landing-target configuration at $case_dir/config/local-landing-targets" "$case_dir/stderr" \
+      || fail "unrecorded-config-$config: refusal did not name the configuration"
+    [ -d "$case_dir/wt" ] || fail "unrecorded-config-$config: worktree was removed"
+  done
+
+  case_dir=$(make_case unrecorded-unmapped-unlanded)
+  write_meta "$case_dir" local-only ship
+  printf 'elsewhere\tsway-debian-stabilization\n' > "$case_dir/config/local-landing-targets"
+  wt_commit "$case_dir" "not landed anywhere"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unrecorded-unmapped-unlanded: unlanded work should still refuse"
+  grep -q 'has work not yet merged into main and not on any remote' "$case_dir/stderr" \
+    || fail "unrecorded-unmapped-unlanded: refusal was not the default-branch refusal"
+  pass "local-only record without landing_target= refuses a bad mapping and keeps the default check when unmapped"
+}
+
 test_local_only_merged_to_local_main_allows() {
   local case_dir rc
   case_dir=$(make_case merged-main)
@@ -3670,6 +3907,15 @@ test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
+test_local_only_merged_to_configured_target_allows
+test_local_only_unmerged_configured_target_refuses
+test_local_only_configured_target_dirty_refuses
+test_local_only_ambiguous_landing_target_refuses
+test_local_only_configured_target_ignores_default_branch
+test_local_only_remote_reachable_work_missing_target_refuses
+test_local_only_unrecorded_target_uses_configured_mapping
+test_local_only_unrecorded_target_mapping_refusals
+test_local_only_unrecorded_target_bad_or_absent_config
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses

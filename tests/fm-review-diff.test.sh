@@ -169,7 +169,46 @@ test_unreachable_pr_head_falls_back_with_warning() {
   pass "fm-review-diff falls back to local branch with a warning when PR head is unreachable"
 }
 
+# A task that records a landing target is reviewed against that local branch,
+# so working-branch-only history never inflates the diff; an unusable recorded
+# target refuses instead of silently falling back to the default branch.
+test_recorded_landing_target_is_the_base() {
+  local case_dir out rc
+  case_dir=$(make_case landing-target)
+  git -C "$case_dir/project" branch working main
+  git -C "$case_dir/wt" checkout -q working
+  printf 'working only\n' > "$case_dir/wt/working.txt"
+  git -C "$case_dir/wt" add working.txt
+  git -C "$case_dir/wt" commit -qm "working branch only"
+  git -C "$case_dir/wt" checkout -q -B fm/task-x1 working
+  printf 'task change\n' > "$case_dir/wt/task.txt"
+  git -C "$case_dir/wt" add task.txt
+  git -C "$case_dir/wt" commit -qm "task change"
+  write_task_meta "$case_dir" "mode=local-only" "landing_target=working"
+
+  out=$(run_review_diff "$case_dir" task-x1 2> "$case_dir/stderr") \
+    || fail "landing-target: review diff failed: $(cat "$case_dir/stderr")"
+  assert_contains "$out" 'diff base: refs/heads/working' "landing-target: diff did not use the recorded target"
+  assert_contains "$out" '+task change' "landing-target: diff lost the task's own change"
+  assert_not_contains "$out" 'working only' "landing-target: diff included working-branch-only history"
+
+  write_task_meta "$case_dir" "mode=local-only" "landing_target=missing-branch"
+  rc=0
+  out=$(run_review_diff "$case_dir" task-x1 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "landing-target: a missing recorded target should refuse"
+  assert_contains "$out" "does not exist" "landing-target: missing-target refusal was not explained"
+  assert_not_contains "$out" 'diff base:' "landing-target: a missing target fell back to another base"
+
+  write_task_meta "$case_dir" "mode=local-only" "landing_target=working" "landing_target=main"
+  rc=0
+  out=$(run_review_diff "$case_dir" task-x1 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "landing-target: an ambiguous recorded target should refuse"
+  assert_contains "$out" "ambiguous or invalid landing target" "landing-target: ambiguous refusal was not explained"
+  pass "fm-review-diff reviews a task against its recorded landing target and refuses an unusable one"
+}
+
 test_pr_meta_uses_pr_head_not_stale_local
+test_recorded_landing_target_is_the_base
 test_pr_meta_fetches_pull_head_without_recorded_sha
 test_stale_recorded_pr_head_loses_to_fetched_pull_head
 test_no_pr_meta_uses_local_branch

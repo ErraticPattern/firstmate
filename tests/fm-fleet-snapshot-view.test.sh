@@ -522,6 +522,10 @@ test_backlog_tasks_axi_forms_and_overrides() {
 - [x] done-bracket-pr - Done Bracket PR - <https://github.com/kunchenguid/firstmate/pull/43> (repo: gamma, merged 2026-07-12) (kind: ship)
 - [x] reported-comma - Reported Scout data/reported-comma/report.md (repo: gamma, reported 2026-07-10) (kind: scout)
 - [x] done-note - Done Note local main (repo: delta, done 2026-07-11) (kind: ship)
+- [x] done-branch-note - Done Branch Note (kind: ship) (done 2026-07-12)
+  local sway-debian-stabilization
+- [x] done-branch-title - Done Branch Title - local sway-debian-stabilization (repo: delta, done 2026-07-12) (kind: ship)
+- [x] done-unicode-branch - Done Unicode Branch - local melhoria/ação (repo: delta, done 2026-07-12) (kind: ship)
 EOF
   printf '# Bold Scout\n' > "$data/bold-task/report.md"
   fm_write_meta "$home/state/bold-task.meta" \
@@ -621,6 +625,17 @@ EOF
       and .done == "2026-07-11"
       and .completion == {verb:"done",date:"2026-07-11"}
   ' >/dev/null || fail "done closure metadata did not parse"
+  printf '%s' "$out" | jq -e '
+    [.backlog.records[] | select(.id == "done-branch-note" or .id == "done-branch-title")]
+    | length == 2
+      and all(.[]; .local_note == "local sway-debian-stabilization")
+      and (map(.title) == ["Done Branch Note", "Done Branch Title"])
+  ' >/dev/null || fail "a landing-target done note did not parse as its branch"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "done-unicode-branch")
+    | .title == "Done Unicode Branch"
+      and .local_note == "local melhoria/ação"
+  ' >/dev/null || fail "a Unicode landing-target done note did not parse as its branch"
   printf '%s' "$out" | jq -e --arg data "$data" '
     .tasks[] | select(.id == "bold-task")
     | .backlog.id == "bold-task"
@@ -636,6 +651,8 @@ EOF
     "view should render bracketed PR artifact outside the title"
   assert_contains "$view" "| done-note | Done Note | delta | ship | - | local main |" \
     "view should render local-only done artifact outside the title"
+  assert_contains "$view" "| done-branch-note | Done Branch Note | - | ship | - | local sway-debian-stabilization |" \
+    "view should render a landing-target done artifact naming its branch"
   pass "snapshot parses tasks-axi rows and respects operational overrides"
 }
 

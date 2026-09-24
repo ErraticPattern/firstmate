@@ -1570,6 +1570,63 @@ test_completion_closes_a_local_only_ship_before_reporting_success() {
   pass "completion closes a local-only ship, with its landing note, before reporting success"
 }
 
+# A local-only ship with a recorded landing target closes naming that branch,
+# not the default branch it never landed on.
+test_completion_names_a_local_only_landing_target() {
+  local case_dir id out
+  id=atomic-close-target-b5
+  case_dir=$(make_home close-local-target)
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  write_task_meta "$case_dir" "$id" ship local-only "spawn_gen=spawn-close-target" \
+    "landing_target=sway-debian-stabilization"
+
+  out=$(run_teardown "$case_dir" "$id") || fail "teardown failed: $out"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "teardown reported success with the item still $(row_state "$case_dir" "$id")"
+  grep -qx '  local sway-debian-stabilization' "$(backlog_of "$case_dir")" \
+    || fail "a landing-target close did not record its branch"
+  assert_no_grep 'local main' "$(backlog_of "$case_dir")" \
+    "a landing-target close still recorded the default branch"
+  pass "completion closes a local-only ship with a landing target naming that branch"
+}
+
+# Pending-close markers written before landing targets existed keep replaying as
+# local main, a landing-target marker replays its branch, and a malformed note
+# is refused rather than guessed.
+test_recovery_replays_local_note_markers() {
+  local case_dir id note expect out
+  for note in 'local%20main|local main' 'local%20sway-debian-stabilization|local sway-debian-stabilization'; do
+    expect=${note#*|}
+    note=${note%%|*}
+    id="atomic-heal-note-${expect##* }-b9"
+    case_dir=$(make_home "heal-note-${expect##* }")
+    add_item "$case_dir" "$id"
+    start_item "$case_dir" "$id"
+    printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-note\narg=--note\narg=%s\n' \
+      "$id" "$(home_of "$case_dir")/data" "$note" \
+      > "$(home_of "$case_dir")/state/$id.backlog-close"
+    out=$(run_bootstrap "$case_dir")
+    [ "$(row_state "$case_dir" "$id")" = "done" ] \
+      || fail "$note marker did not close its item: $out"
+    grep -qx "  $expect" "$(backlog_of "$case_dir")" || fail "$note marker did not render $expect"
+    assert_absent "$(home_of "$case_dir")/state/$id.backlog-close" "$note marker remained after replay"
+  done
+
+  id=atomic-heal-note-invalid-b9
+  case_dir=$(make_home heal-note-invalid)
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-note\narg=--note\narg=local%%20a..b\n' \
+    "$id" "$(home_of "$case_dir")/data" > "$(home_of "$case_dir")/state/$id.backlog-close"
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "a malformed local note marker closed its item: $out"
+  assert_present "$(home_of "$case_dir")/state/$id.backlog-close" \
+    "a malformed local note marker was discarded instead of refused"
+  pass "recovery replays old and landing-target local notes and refuses a malformed one"
+}
+
 test_completion_closes_a_scout_with_its_report() {
   local case_dir id out
   id=atomic-close-b6
@@ -3034,6 +3091,8 @@ test_dispatch_interruption_during_kimi_readiness_fails_before_commit
 test_dispatch_does_not_resurrect_a_row_closed_after_preflight
 test_dispatch_fails_when_its_row_vanishes_after_preflight
 test_completion_closes_a_local_only_ship_before_reporting_success
+test_completion_names_a_local_only_landing_target
+test_recovery_replays_local_note_markers
 test_completion_closes_a_scout_with_its_report
 test_completion_refuses_a_legacy_record_without_an_incarnation
 test_completion_refuses_ambiguous_incarnation_metadata

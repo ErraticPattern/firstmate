@@ -40,7 +40,7 @@ Choose that posture when adding or creating the project:
 
 - `no-mistakes` runs the full validation pipeline before a PR.
 - `direct-PR` pushes and opens a PR without the no-mistakes pipeline.
-- `local-only` has no required remote or PR and lands only through the approved local fast-forward path.
+- `local-only` has no required remote or PR and lands only through the approved local fast-forward path; a project whose live branch is not its default branch declares it in `config/local-landing-targets` ([`docs/configuration.md`](../../../docs/configuration.md) "Local landing targets").
 - `no-mistakes-prod-only` is a conditional policy rather than one flat mode: genuinely internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`.
 
 `no-mistakes-prod-only` is the default for a newly added or created remote-backed project when the captain specifies nothing, and a project with no remote defaults to `local-only`.

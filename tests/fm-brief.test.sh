@@ -323,6 +323,49 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
+# A local-only brief with an explicit landing branch tells the worker to start
+# from, rebase onto, and land on that branch, and records it in the contract line
+# fm-spawn.sh checks; the flag is refused wherever it cannot apply.
+test_local_only_landing_target_brief() {
+  local home id brief out status label args expect
+  home="$TMP_ROOT/landing-target-home"
+  write_registry "$home"
+  id="brief-landing-target-a7"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" local-proj --mode local-only \
+    --landing-target sway-debian-stabilization >/dev/null 2>&1 \
+    || fail "local-only brief with a landing target should scaffold"
+  brief="$home/data/$id/brief.md"
+  grep -qx "Delivery contract: mode=local-only landing_target=sway-debian-stabilization" "$brief" \
+    || fail "landing-target brief did not record its target in the contract line"
+  assert_grep "at a detached HEAD on the current tip of local branch \`sway-debian-stabilization\`" "$brief" \
+    "landing-target brief did not name its base"
+  assert_grep "firstmate handles the merge into local \`sway-debian-stabilization\`" "$brief" \
+    "landing-target brief rule 1 did not name the landing branch"
+  assert_grep "if \`sway-debian-stabilization\` has advanced, rebase onto it" "$brief" \
+    "landing-target brief did not tell the worker to rebase onto its landing branch"
+  assert_grep "firstmate merges it into local \`sway-debian-stabilization\` through the guarded fast-forward path." "$brief" \
+    "landing-target brief did not name the branch firstmate merges into"
+  assert_no_grep "if \`main\` has advanced" "$brief" \
+    "landing-target brief still told the worker to rebase onto the default branch"
+  assert_no_grep "merge into local \`main\`" "$brief" \
+    "landing-target brief rule 1 still named the default branch"
+
+  mkdir -p "$home/data"
+  while IFS='|' read -r label args expect; do
+    [ -n "$label" ] || continue
+    # shellcheck disable=SC2086  # args is an intentional word-split arg list
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: expected a non-zero exit"
+    assert_contains "$out" "$expect" "$label: refusal did not explain why"
+  done <<'ROWS'
+landing target on direct-PR|brief-landing-b1 some-proj --mode direct-PR --landing-target work|applies only to local-only ship briefs
+landing target on a scout|brief-landing-b2 some-proj --scout --landing-target work|applies only to local-only ship briefs
+invalid landing target|brief-landing-b3 some-proj --mode local-only --landing-target a..b|invalid landing target
+ROWS
+  pass "fm-brief.sh: a local-only landing target names that branch throughout the worker contract"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -934,6 +977,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_local_only_landing_target_brief
 test_ask_user_escalation_format
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete

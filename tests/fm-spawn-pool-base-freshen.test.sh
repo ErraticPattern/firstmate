@@ -743,6 +743,101 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   pass "a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort"
 }
 
+# Give the scratch project a local working branch one commit ahead of the
+# default branch, so a worker started from the wrong base is detectable.
+add_working_branch() {
+  local branch=${1:-sway-debian-stabilization}
+  git -C "$PROJECT_DIR" branch "$branch" "$INITIAL_SHA"
+  git -C "$PROJECT_DIR" worktree add --quiet "$CASE_DIR/working-branch" "$branch"
+  printf 'working branch only\n' > "$CASE_DIR/working-branch/working.txt"
+  git -C "$CASE_DIR/working-branch" add working.txt
+  git -C "$CASE_DIR/working-branch" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm working-branch
+  git -C "$PROJECT_DIR" worktree remove --force "$CASE_DIR/working-branch"
+  git -C "$PROJECT_DIR" rev-parse "refs/heads/$branch"
+}
+
+test_local_only_configured_target_is_recorded_and_used_as_base() {
+  local rec id out status target_sha
+  id='pool-landing-target-configured-r1'
+  rec=$(make_case landing-target-configured "$id")
+  read_case_record "$rec"
+  target_sha=$(add_working_branch)
+  printf 'project\tsway-debian-stabilization\n' > "$HOME_DIR/config/local-landing-targets"
+
+  printf '\n# Definition of done\nDelivery contract: mode=local-only\n' >> "$HOME_DIR/data/$id/brief.md"
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief that lands on the default branch launched a configured local-only task"$'\n'"$out"
+  assert_contains "$out" "landing target mismatch" "the brief/target mismatch was not explained"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused brief/target mismatch published task metadata"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] \
+    || fail "a refused brief/target mismatch moved the pooled worktree"
+
+  sed -i.bak 's/^Delivery contract: mode=local-only$/Delivery contract: mode=local-only landing_target=sway-debian-stabilization/' \
+    "$HOME_DIR/data/$id/brief.md"
+  rm -f "$HOME_DIR/data/$id/brief.md.bak"
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "a configured local-only spawn should launch"$'\n'"$out"
+  assert_grep 'landing_target=sway-debian-stabilization' "$HOME_DIR/state/$id.meta" \
+    "the configured landing target was not recorded in the task metadata"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$target_sha" ] \
+    || fail "the configured local-only worker did not start from its landing branch"
+  pass "a configured local-only spawn records its landing target and starts from that branch"
+}
+
+test_local_only_without_target_is_unchanged() {
+  local rec id out status
+  id='pool-landing-target-absent-r1'
+  rec=$(make_case landing-target-absent "$id")
+  read_case_record "$rec"
+  add_working_branch >/dev/null
+  printf 'elsewhere\tsway-debian-stabilization\n' > "$HOME_DIR/config/local-landing-targets"
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "an unconfigured local-only spawn should launch"$'\n'"$out"
+  assert_no_grep 'landing_target=' "$HOME_DIR/state/$id.meta" \
+    "an unconfigured local-only spawn recorded a landing target"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$(git -C "$POOL_DIR" rev-parse "origin/$DEFAULT_BRANCH")" ] \
+    || fail "an unconfigured local-only worker did not start from the default branch"
+  pass "a local-only spawn for an unconfigured project records nothing and starts from the default branch"
+}
+
+test_landing_target_refusals_publish_nothing() {
+  local rec id out status case_name args config
+  for case_name in default missing contradicts not-local-only; do
+    id="pool-landing-target-$case_name-r1"
+    rec=$(make_case "landing-target-$case_name" "$id")
+    read_case_record "$rec"
+    add_working_branch >/dev/null
+    args=(--mode local-only --yolo off)
+    config=$'project\tsway-debian-stabilization'
+    case "$case_name" in
+      default) config=$'project\tmain' ;;
+      missing) config=$'project\tnot-a-branch' ;;
+      contradicts) args+=(--landing-target other) ;;
+      not-local-only) config=''; args=(--mode no-mistakes --yolo off --landing-target sway-debian-stabilization) ;;
+    esac
+    [ -z "$config" ] || printf '%s\n' "$config" > "$HOME_DIR/config/local-landing-targets"
+
+    out=$(run_spawn "$id" "${args[@]}")
+    status=$?
+    [ "$status" -ne 0 ] || fail "$case_name: spawn launched despite an unusable landing target"$'\n'"$out"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$case_name: refused spawn published task metadata"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] \
+      || fail "$case_name: refused spawn moved the pooled worktree"
+    case "$case_name" in
+      default) assert_contains "$out" "is the default branch" "$case_name: refusal was not explained" ;;
+      missing) assert_contains "$out" "does not exist" "$case_name: refusal was not explained" ;;
+      contradicts) assert_contains "$out" "contradicts configured target" "$case_name: refusal was not explained" ;;
+      not-local-only) assert_contains "$out" "applies only to local-only" "$case_name: refusal was not explained" ;;
+    esac
+  done
+  pass "a default, missing, contradictory, or misapplied landing target refuses before launch"
+}
+
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_linked_spawning_home_rejects_primary_before_refresh
@@ -763,5 +858,8 @@ test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale
 test_stale_pin_beside_other_dirt_reports_one_verdict
+test_local_only_configured_target_is_recorded_and_used_as_base
+test_local_only_without_target_is_unchanged
+test_landing_target_refusals_publish_nothing
 
 echo "# all fm-spawn-pool-base-freshen tests passed"

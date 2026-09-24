@@ -3805,6 +3805,99 @@ test_released_merge_passes_the_entrypoint_and_lands() {
   pass "a released merge passes the guarded entrypoint and remains recently landed"
 }
 
+# A released local-only task whose metadata records <target> as its landing
+# branch, with one commit on fm/<id> based on <base>.
+make_landing_task() {  # <home> <repo> <id> <base> <target>
+  local home=$1 repo=$2 id=$3 base=$4 target=$5 wt
+  wt="$home/projects/$id"
+  git -C "$repo" worktree add --quiet -b "fm/$id" "$wt" "$base"
+  printf '%s delivery\n' "$id" > "$wt/$id.txt"
+  git -C "$wt" add "$id.txt"
+  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm "$id delivery"
+  tasks_in "$home" add "$id" "Land $id on its recorded branch" --kind ship \
+    --repo sample --start >/dev/null || fail "could not create task $id"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
+    "project=$repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "landing_target=$target" "spawn_gen=fixture-$id"
+  run_captain "$home" hold "$id" --reason "captain local merge approval pending" >/dev/null \
+    || fail "could not hold task $id"
+  printf 'Land the local change.\n' > "$home/$id-answer.txt"
+  run_captain "$home" answer "$id" --release --decision-file "$home/$id-answer.txt" \
+    >/dev/null || fail "could not release task $id"
+}
+
+run_merge_local() {  # <home> <id>
+  local home=$1
+  PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$ROOT/bin/fm-merge-local.sh" "$2" 2>&1
+}
+
+test_local_merge_lands_on_recorded_working_branch_and_refuses_divergence() {
+  local home repo target main_before target_before out rc
+  home=$(make_home local-working-branch-merge)
+  repo="$home/projects/sample"
+  target=sway-debian-stabilization
+  fm_git_init_commit "$repo"
+  git -C "$repo" checkout -q -b "$target"
+  printf 'working branch only\n' > "$repo/working.txt"
+  git -C "$repo" add working.txt
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm 'working branch only'
+  main_before=$(git -C "$repo" rev-parse main)
+
+  make_landing_task "$home" "$repo" sample-working-branch "$target" "$target"
+  out=$(run_merge_local "$home" sample-working-branch) \
+    || fail "working-branch local merge failed: $out"
+  [ "$(git -C "$repo" rev-parse "$target")" = "$(git -C "$repo" rev-parse fm/sample-working-branch)" ] \
+    || fail "working-branch local merge did not advance $target"
+  [ "$(git -C "$repo" rev-parse main)" = "$main_before" ] \
+    || fail "working-branch local merge moved the default branch"
+  assert_contains "$out" "into local $target" "working-branch merge did not name the branch it moved"
+
+  make_landing_task "$home" "$repo" sample-working-branch-diverged main "$target"
+  target_before=$(git -C "$repo" rev-parse "$target")
+  rc=0
+  out=$(run_merge_local "$home" sample-working-branch-diverged) || rc=$?
+  expect_code 1 "$rc" "diverged working-branch merge should refuse"
+  assert_contains "$out" "not a fast-forward of $target" \
+    "diverged working-branch merge did not name its target"
+  [ "$(git -C "$repo" rev-parse "$target")" = "$target_before" ] \
+    || fail "a refused diverged merge moved $target"
+  pass "local merge lands on its recorded working branch and refuses divergence"
+}
+
+# The primary checkout must sit on the recorded branch, and a record naming the
+# default branch as its landing target is refused rather than treated as default.
+test_local_merge_refuses_wrong_checkout_and_default_target() {
+  local home repo target before out rc
+  home=$(make_home local-working-branch-guards)
+  repo="$home/projects/sample"
+  target=sway-debian-stabilization
+  fm_git_init_commit "$repo"
+  git -C "$repo" branch "$target" main
+
+  make_landing_task "$home" "$repo" sample-wrong-checkout "$target" "$target"
+  before=$(git -C "$repo" rev-parse "$target")
+  rc=0
+  out=$(run_merge_local "$home" sample-wrong-checkout) || rc=$?
+  expect_code 1 "$rc" "a merge with the primary checkout off the landing branch should refuse"
+  assert_contains "$out" "expected landing target '$target'" \
+    "the wrong-checkout refusal did not name the landing branch"
+  [ "$(git -C "$repo" rev-parse "$target")" = "$before" ] || fail "a refused merge moved $target"
+
+  make_landing_task "$home" "$repo" sample-default-target main main
+  before=$(git -C "$repo" rev-parse main)
+  rc=0
+  out=$(run_merge_local "$home" sample-default-target) || rc=$?
+  expect_code 1 "$rc" "a recorded landing target naming the default branch should refuse"
+  assert_contains "$out" "is the default branch" "the default-target refusal was not explained"
+  [ "$(git -C "$repo" rev-parse main)" = "$before" ] || fail "a refused merge moved main"
+  pass "local merge refuses a primary checkout off its landing branch and a default-branch target"
+}
+
 # "Cannot tell" is not permission to close. A ship row has no separate
 # inventory gate ahead of the close, so the predicate itself must refuse before
 # any destructive step when the hold cannot be read.
@@ -4024,6 +4117,8 @@ test_merge_entrypoints_validate_identity_and_state_before_locking
 test_merge_entrypoints_refuse_a_reused_task_incarnation
 test_merge_entrypoints_serialize_forced_teardown_before_task_reads
 test_released_merge_passes_the_entrypoint_and_lands
+test_local_merge_lands_on_recorded_working_branch_and_refuses_divergence
+test_local_merge_refuses_wrong_checkout_and_default_target
 test_teardown_refuses_a_ship_when_the_captain_hold_cannot_be_read
 test_verify_resolves_a_hold_migrated_to_beads_notes
 test_verify_resolves_a_hold_migrated_under_the_configured_prefix

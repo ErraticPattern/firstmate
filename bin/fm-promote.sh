@@ -24,7 +24,11 @@
 # read the scout's report (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never looks it up.
 # no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>
+# A local-only promotion resolves its landing branch exactly as a local-only ship
+# spawn does, from --landing-target and config/local-landing-targets
+# (bin/fm-landing-target-lib.sh), records it as landing_target=, and tells the
+# worker to rebase onto that branch instead of the default branch.
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--landing-target <branch>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,11 +36,14 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-landing-target-lib.sh
+. "$SCRIPT_DIR/fm-landing-target-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
@@ -52,8 +59,10 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 MODE=
 YOLO=
+LANDING_TARGET_ARG=
 MODE_SET=0
 YOLO_SET=0
+LANDING_TARGET_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -64,6 +73,7 @@ for a in "$@"; do
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
+      landing-target) LANDING_TARGET_ARG=$a; LANDING_TARGET_SET=1 ;;
     esac
     want_value=
     continue
@@ -73,6 +83,8 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
+    --landing-target) want_value=landing-target ;;
+    --landing-target=*) LANDING_TARGET_ARG=${a#--landing-target=}; LANDING_TARGET_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -97,6 +109,10 @@ case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
+if [ "$LANDING_TARGET_SET" -eq 1 ]; then
+  [ -n "$LANDING_TARGET_ARG" ] || { echo "error: --landing-target requires a non-empty value" >&2; exit 1; }
+  [ "$MODE" = local-only ] || { echo "error: --landing-target applies only to local-only promotions" >&2; exit 1; }
+fi
 
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
@@ -144,6 +160,19 @@ if ! fm_backlog_record_present "$META" "task record" "$STATE"; then
 fi
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
 
+LANDING_TARGET=
+if [ "$MODE" = local-only ] && { [ "$LANDING_TARGET_SET" -eq 1 ] || [ -e "$CONFIG/local-landing-targets" ] || [ -L "$CONFIG/local-landing-targets" ]; }; then
+  PROJ=$(grep '^project=' "$META" | cut -d= -f2- || true)
+  [ -n "$PROJ" ] && [ -d "$PROJ" ] || { echo "error: task $ID records no readable project; cannot resolve its landing target" >&2; exit 1; }
+  LANDING_TARGET=$(fm_landing_target_resolve "$CONFIG" "$PROJ" "$LANDING_TARGET_ARG") || exit 1
+  if [ -n "$LANDING_TARGET" ]; then
+    fm_landing_target_require_branch "$PROJ" "$LANDING_TARGET" || exit 1
+    fm_landing_target_reject_default "$PROJ" "$LANDING_TARGET" || exit 1
+  fi
+fi
+PROMOTION_BASE="a clean default-branch base"
+[ -z "$LANDING_TARGET" ] || PROMOTION_BASE="a clean base at the current tip of local branch \`$LANDING_TARGET\`, this task's landing branch"
+
 SCOUT_BRIEF="$DATA/$ID/brief.md"
 if fm_brief_task_placeholders_present "$SCOUT_BRIEF"; then
   echo "error: $SCOUT_BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; preserve the original ask in ## Captain's intent and fill the scout-time ## Firstmate spec; promotion generates a separate ship-time spec" >&2
@@ -182,7 +211,7 @@ IFS= read -r -d '' PROMOTION_SHIP_SPEC <<EOF || true
 If these promotion steps were already completed before a relaunch, preserve the existing \`fm/$ID\` branch and continue from its current state; do not repeat them destructively.
 1. **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from. If either does not resolve to the worktree you were launched in, stop and escalate to firstmate.
 2. Inventory this worktree's scratch state with \`git status\` and \`git log\` before changing anything.
-3. Return to a clean default-branch base, then create your branch: \`git checkout -b fm/$ID\`.
+3. Return to $PROMOTION_BASE, then create your branch: \`git checkout -b fm/$ID\`.
 4. Carry over only the intended fix changes. Leave scratch commits, debug edits, and experiment files behind.
 5. If you reproduced a bug, turn that reproduction into a regression test.
 6. Treat the scout-time Firstmate spec and any unmarked legacy \`# Task\` text as investigation context, not captain intent or current ship-time instructions.
@@ -199,13 +228,13 @@ The mode-specific Definition of done below is the current delivery contract.
 
 # Current ship safety rule
 EOF
-  fm_ship_rule_one "$MODE" "$ID"
+  fm_ship_rule_one "$MODE" "$ID" "$LANDING_TARGET"
   if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
     printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
-  fm_dod_block "$MODE" "$ID"
+  fm_dod_block "$MODE" "$ID" "$LANDING_TARGET"
 }
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }
@@ -258,11 +287,12 @@ fi
 BRIEF_REPLACEMENT=
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' "$META" > "$TMP"
+grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^landing_target=' "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  [ -z "$LANDING_TARGET" ] || echo "landing_target=$LANDING_TARGET"
 } >> "$TMP"
 if ! fm_backlog_atomic_transition publish "$TMP" "$META" "task record" "$STATE"; then
   rm -f -- "$TMP"
@@ -278,7 +308,7 @@ META_LOCK_HELD=0
 
 HOME_Q=$(printf '%q' "$FM_HOME")
 INSTRUCTIONS_Q=$(printf '%q' "$INSTRUCTIONS")
-echo "promoted $ID to ship mode=$MODE yolo=$YOLO (teardown protection restored)"
+echo "promoted $ID to ship mode=$MODE yolo=$YOLO${LANDING_TARGET:+ landing_target=$LANDING_TARGET} (teardown protection restored)"
 echo "wrote ship instructions for mode=$MODE: $INSTRUCTIONS"
 echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID \"\$(cat $INSTRUCTIONS_Q)\""
 

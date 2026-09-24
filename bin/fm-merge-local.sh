@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Perform the approved local merge for a local-only ship task: fast-forward the
-# project's default branch to the crewmate's fm/<id> branch.
+# project's landing branch to the crewmate's fm/<id> branch. The landing branch
+# is the task's recorded landing_target= (bin/fm-landing-target-lib.sh owns its
+# validation), or the project's default branch when the task records none. A
+# recorded target must exist locally and must not be the default branch; the
+# primary checkout must be clean and checked out on the landing branch, and the
+# success line names the branch that moved.
 #
 # This is firstmate's merge gate-action (the captain's merge authority applied
 # locally instead of via a GitHub PR). It is the one sanctioned exception to hard
@@ -21,6 +26,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-landing-target-lib.sh
+. "$SCRIPT_DIR/fm-landing-target-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
@@ -73,6 +80,7 @@ fi
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ "$MODE" = local-only ] || { echo "error: task $ID is mode=$MODE, not local-only; merge PR tasks with bin/fm-pr-merge.sh <id> <PR url> after approval" >&2; exit 1; }
+LANDING_TARGET=$(fm_landing_target_from_meta "$META") || exit 1
 
 default_branch() {
   local ref branch
@@ -94,24 +102,39 @@ BRANCH="fm/$ID"
 git -C "$PROJ" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null || { echo "error: branch $BRANCH does not exist in $PROJ" >&2; exit 1; }
 
 DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
+# A recorded target is always addressed by its full local ref, so a tag or
+# remote-tracking ref of the same short name can never stand in for it; the
+# default-branch path keeps its historical short-name resolution.
+TARGET=$DEFAULT
+TARGET_REF=$DEFAULT
+if [ -n "$LANDING_TARGET" ]; then
+  fm_landing_target_require_branch "$PROJ" "$LANDING_TARGET" || exit 1
+  [ "$LANDING_TARGET" != "$DEFAULT" ] || { echo "error: recorded landing target '$LANDING_TARGET' is the default branch; omit it to use default behavior" >&2; exit 1; }
+  TARGET=$LANDING_TARGET
+  TARGET_REF="refs/heads/$LANDING_TARGET"
+fi
 
-# The project's main checkout must be on its default branch and clean, so the
-# fast-forward lands predictably (firstmate never writes here otherwise).
+# The project's main checkout must be on its recorded landing target and clean,
+# so the fast-forward lands predictably (firstmate never writes here otherwise).
 cur=$(git -C "$PROJ" symbolic-ref --short HEAD 2>/dev/null || echo "")
-[ "$cur" = "$DEFAULT" ] || { echo "error: $PROJ is on '$cur', expected default branch '$DEFAULT'; cannot merge safely" >&2; exit 1; }
+if [ -n "$LANDING_TARGET" ]; then
+  [ "$cur" = "$TARGET" ] || { echo "error: $PROJ is on '$cur', expected landing target '$TARGET'; cannot merge safely" >&2; exit 1; }
+else
+  [ "$cur" = "$DEFAULT" ] || { echo "error: $PROJ is on '$cur', expected default branch '$DEFAULT'; cannot merge safely" >&2; exit 1; }
+fi
 if [ -n "$(git -C "$PROJ" status --porcelain 2>/dev/null | head -1)" ]; then
   echo "error: $PROJ has a dirty working tree; refusing to merge into it" >&2
   exit 1
 fi
 
-# Clean fast-forward only: DEFAULT must be an ancestor of BRANCH.
-if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
-  echo "REFUSED: $BRANCH is not a fast-forward of $DEFAULT (it has diverged)." >&2
-  echo "Have the crewmate rebase $BRANCH onto $DEFAULT, then retry." >&2
+# Clean fast-forward only: the landing target must be an ancestor of BRANCH.
+if ! git -C "$PROJ" merge-base --is-ancestor "$TARGET_REF" "$BRANCH"; then
+  echo "REFUSED: $BRANCH is not a fast-forward of $TARGET (it has diverged)." >&2
+  echo "Have the crewmate rebase $BRANCH onto $TARGET, then retry." >&2
   exit 1
 fi
 
-before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
+before=$(git -C "$PROJ" rev-parse --short "$TARGET_REF")
 hold_status=0
 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
   "$SCRIPT_DIR/fm-captain-hold.sh" open "$ID" --distinguish-absent || hold_status=$?
@@ -131,5 +154,5 @@ git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null || merge_status=$?
 fm_lock_release "$MERGE_CONTROL_LOCK" || true
 MERGE_CONTROL_LOCK=
 [ "$merge_status" -eq 0 ] || exit "$merge_status"
-after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
-echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+after=$(git -C "$PROJ" rev-parse --short "$TARGET_REF")
+echo "merged $BRANCH into local $TARGET ($before -> $after) in $PROJ"
