@@ -158,11 +158,14 @@
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
 #
-# STATUS TAILS: FM_SESSION_START_STATUS_TAIL bounds how many lines each task's
-# tail prints, and bin/fm-line-cap-lib.sh bounds how long each of those lines
-# may be. Both bounds are safe because the section prints every task's full
-# status log path, and AGENTS.md section 8 treats a status line as a wake EVENT
-# rather than current state - bin/fm-crew-state.sh owns current state.
+# STATUS TAILS: FM_SESSION_START_STATUS_TAIL (default 3) bounds how many lines
+# each task's tail prints, and bin/fm-line-cap-lib.sh cuts each of those lines
+# at STATUS_TAIL_LINE_CAP characters with its shared truncation marker. Each
+# tail header names the log's total line count, so omitted older lines are
+# disclosed rather than silently dropped. Both bounds are safe because the
+# section prints every task's full status log path, and AGENTS.md section 8
+# treats a status line as a wake EVENT rather than current state -
+# bin/fm-crew-state.sh owns current state.
 #
 # RUNTIME BOUND: the digest is now executed through a native session-open
 # adapter (see bin/fm-sessionstart-run.sh), which blocks either hook-driven
@@ -211,13 +214,17 @@
 #             fm-sessionstart-run.sh. A genuine `startup` that owns the active
 #             session lock records AGENTS.md's SHA-256 baseline only after the
 #             digest completion record is published, keyed to that lock's
-#             harness pid. No resume, clear, reset, compact, or other rebuild
-#             creates or replaces it. Pi and pi-signed compaction are the only
-#             supported stale-cache rebuild pair: a missing baseline, a baseline
-#             for another harness pid, or a changed hash causes the complete
-#             current AGENTS.md to print before the bulky digest. The baseline
-#             remains immutable so every later drifted compaction refreshes
-#             again, while an equal baseline emits no instruction refresh.
+#             harness pid. Pi and pi-signed compaction are the only supported
+#             stale-cache rebuild pair. When that rebuild owns the lock and has
+#             no baseline of its own, it records one only if AGENTS.md was last
+#             modified before its harness process started, which proves the
+#             session loaded the current bytes; no other rebuild creates or
+#             replaces a baseline. A missing baseline, a baseline for another
+#             harness pid, or a changed hash then causes the complete current
+#             AGENTS.md to print before the bulky digest, while an equal
+#             baseline prints one line naming the matched hash instead. The
+#             baseline remains immutable for its owner so every later drifted
+#             compaction refreshes again.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -353,8 +360,12 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 # agent's environment.
 if fm_tasks_axi_compatible; then TASKS_AXI_COMPATIBLE=1; else TASKS_AXI_COMPATIBLE=0; fi
 
-STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
-case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
+STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-3}
+case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
+# Tighter than bin/fm-line-cap-lib.sh's shared default: the lede of a status
+# line carries its state word and decision key, and the digest prints one tail
+# per task, so this cap scales every startup with fleet size.
+STATUS_TAIL_LINE_CAP=140
 QUEUED_LIMIT=${FM_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
@@ -524,15 +535,21 @@ print_backlog_compact() {
 }
 
 print_status_tail() {
-  local status=$1 line
-  printf 'status tail (last %s line(s), each capped at %s characters, wake-EVENT history, not current state; full log: %s):\n' \
-    "$STATUS_TAIL" "$FM_LINE_CAP_DEFAULT" "$status"
+  local status=$1 line total shown
+  # The header names how many lines the log holds, so the omitted older lines
+  # are counted rather than silently dropped.
+  total=$(awk 'END { print NR }' "$status" 2>/dev/null)
+  case "$total" in ''|*[!0-9]*) total=0 ;; esac
+  shown=$STATUS_TAIL
+  [ "$total" -ge "$shown" ] || shown=$total
+  printf 'status tail (last %s of %s line(s), each capped at %s characters, wake-EVENT history, not current state; full log: %s):\n' \
+    "$shown" "$total" "$STATUS_TAIL_LINE_CAP" "$status"
   # A crewmate writes its own status lines, so their length is unbounded: one
-  # observed line ran 865 characters. Cap each one the way the wake digest's
-  # OPEN DECISIONS section does; the lede carries the state word and the key,
-  # and the full log path above reaches the rest.
+  # observed line ran 865 characters. Cut each one with the wake digest's shared
+  # truncation marker; the lede carries the state word and the key, and the
+  # full log path above reaches the rest.
   while IFS= read -r line || [ -n "$line" ]; do
-    fm_cap_line "$line"
+    fm_cap_line "$line" "$STATUS_TAIL_LINE_CAP"
   done < <(tail -n "$STATUS_TAIL" "$status")
 }
 
@@ -583,18 +600,86 @@ agents_baseline_drifted() {  # <rebuilding-session-pid>
 # Only run-tier source pairs with both a stale native instruction cache and a
 # working Firstmate delivery path arrive here. Claude fresh-reads on reset, and
 # Codex has no tracked interactive reset delivery path.
-agents_refresh_required() {  # <rebuilding-session-pid>
-  local lock_pid=$1
+agents_refresh_supported() {
   case "$PRIMARY_HARNESS:$SESSION_SOURCE" in
-    pi:compact|pi-signed:compact) ;;
-    *) return 1 ;;
+    pi:compact|pi-signed:compact) return 0 ;;
   esac
-  agents_baseline_drifted "$lock_pid"
+  return 1
+}
+
+# Epoch second when <pid> started, from ps's elapsed-time field, which Linux
+# and macOS both print as [[dd-]hh:]mm:ss.
+process_start_epoch() {  # <pid>
+  local etime days=0 rest h=0 m=0 sec=0 a b c n now
+  etime=$(LC_ALL=C ps -o etime= -p "$1" 2>/dev/null | tr -d '[:space:]')
+  case "$etime" in ''|*[!0-9:-]*) return 1 ;; esac
+  case "$etime" in
+    *-*) days=${etime%%-*}; rest=${etime#*-} ;;
+    *) rest=$etime ;;
+  esac
+  IFS=: read -r a b c <<EOF
+$rest
+EOF
+  if [ -n "$c" ]; then
+    h=$a; m=$b; sec=$c
+  elif [ -n "$b" ]; then
+    m=$a; sec=$b
+  else
+    return 1
+  fi
+  for n in "$days" "$h" "$m" "$sec"; do
+    case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  done
+  now=$(date +%s) || return 1
+  printf '%s\n' $((now - ((10#$days * 24 + 10#$h) * 60 + 10#$m) * 60 - 10#$sec))
+}
+
+file_mtime_epoch() {  # <file>
+  local mtime
+  if [ "$(uname)" = Darwin ]; then
+    mtime=$(/usr/bin/stat -f %m "$1" 2>/dev/null)
+  else
+    mtime=$(stat -c %Y "$1" 2>/dev/null)
+  fi
+  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$mtime"
+}
+
+# A session whose true startup recorded no baseline (a manual or nudged start,
+# or one that predates baselines) still started with knowable bytes when
+# AGENTS.md was last written before the lock owner's process began: the harness
+# then loaded exactly the current file. Record that proven start hash once for
+# this lock owner, never replacing a baseline the owner already has. Without the
+# proof nothing is recorded and the rebuild keeps refreshing conservatively.
+record_proven_agents_baseline() {  # <lock-pid>
+  local lock_pid=$1 started mtime_before mtime_after agents_hash
+  [ -n "$lock_pid" ] || return 0
+  if [ -f "$AGENTS_BASELINE_FILE" ] && [ ! -L "$AGENTS_BASELINE_FILE" ] \
+    && [ "$(sed -n '1p' "$AGENTS_BASELINE_FILE" 2>/dev/null)" = "$lock_pid" ]; then
+    return 0
+  fi
+  started=$(process_start_epoch "$lock_pid") || return 0
+  mtime_before=$(file_mtime_epoch "$FM_ROOT/AGENTS.md") || return 0
+  # One second of margin absorbs whole-second rounding on both clocks.
+  [ "$mtime_before" -lt $((started - 1)) ] || return 0
+  agents_hash=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null) || return 0
+  mtime_after=$(file_mtime_epoch "$FM_ROOT/AGENTS.md") || return 0
+  [ "$mtime_after" = "$mtime_before" ] || return 0
+  write_agents_baseline "$lock_pid" "$agents_hash" || true
 }
 
 print_agents_refresh_if_required() {  # <rebuilding-session-pid>
   local lock_pid=$1
-  agents_refresh_required "$lock_pid" || return 0
+  agents_refresh_supported || return 0
+  if [ "$READ_ONLY" -eq 0 ] && [ -n "$lock_pid" ] \
+    && [ "$(cat "$STATE/.lock" 2>/dev/null)" = "$lock_pid" ]; then
+    record_proven_agents_baseline "$lock_pid"
+  fi
+  if ! agents_baseline_drifted "$lock_pid"; then
+    printf 'AGENTS.md unchanged since this session started (%s): the instruction copy already loaded is current, so it is not reprinted.\n' \
+      "$(sed -n '2p' "$AGENTS_BASELINE_FILE" 2>/dev/null)"
+    return 0
+  fi
   section "CURRENT AGENTS.md - INSTRUCTION REFRESH"
   if [ -f "$FM_ROOT/AGENTS.md" ]; then
     cat <<'EOF'
