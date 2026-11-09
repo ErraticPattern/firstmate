@@ -214,10 +214,11 @@
 #             digest completion record is published, keyed to that lock's
 #             harness pid. Pi and pi-signed compaction are the only supported
 #             stale-cache rebuild pair. When that rebuild owns the lock and has
-#             no baseline of its own, it records one only if AGENTS.md's inode
-#             last changed (its ctime, which userspace cannot backdate) before
-#             its harness process started, which proves the session loaded the
-#             current bytes; no other rebuild creates or replaces a baseline. A
+#             no baseline of its own, it records one only if AGENTS.md is not a
+#             symlink and its inode last changed (its ctime, which userspace
+#             cannot backdate) before its harness process started, which
+#             proves the session loaded the current bytes; no other rebuild
+#             creates or replaces a baseline. A
 #             missing baseline, a baseline for another harness pid, or a changed
 #             hash then causes the complete current AGENTS.md to print before
 #             the bulky digest, while an equal baseline emits no instruction
@@ -658,6 +659,9 @@ record_proven_agents_baseline() {  # <lock-pid>
   agents_hash=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null) || return 0
   ctime_after=$(file_ctime_epoch "$FM_ROOT/AGENTS.md") || return 0
   [ "$ctime_after" = "$ctime_before" ] || return 0
+  # Swapping in a symlink changes no inode ctime read above, so a symlinked
+  # AGENTS.md never proves its start bytes.
+  [ ! -L "$FM_ROOT/AGENTS.md" ] || return 0
   write_agents_baseline "$lock_pid" "$agents_hash" || true
 }
 

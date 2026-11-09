@@ -2365,6 +2365,20 @@ $(hash_file_for_test "$root/AGENTS.md")" ] \
   assert_absent "$home/state/.session-start-agents-baseline" \
     "a backdated mtime recorded an unproven baseline"
 
+  # A symlink swapped in mid-session can point at a file whose inode last
+  # changed before the session started, so the target's ctime proves nothing
+  # about the bytes the session loaded: refresh, no record.
+  printf '%s\n' 'PROVEN_AGENTS=symlinked' > "$home/agents-prestaged.md"
+  ln -sf "$home/agents-prestaged.md" "$root/AGENTS.md"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 FM_FAKE_AGENTS_CTIME=$((now - 7200)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "an AGENTS.md swapped for a symlink to an older file was trusted as already loaded"
+  assert_contains "$out" "PROVEN_AGENTS=symlinked" \
+    "the refresh after a symlink swap did not print the current AGENTS content"
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a symlink swap recorded an unproven baseline"
+
   pass "a Pi compact silently records a proven start hash once instead of reprinting an unchanged AGENTS.md"
 }
 
