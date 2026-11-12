@@ -253,11 +253,44 @@ case "$*" in
     [ -n "${FM_FAKE_HARNESS_PID:-}" ] || exit 1
     /bin/ps -o ppid= -p "$pid"
     ;;
+  *"etime="*)
+    # Elapsed time since the harness process started, only when a case sets it.
+    [ -n "${FM_FAKE_HARNESS_ETIME:-}" ] && [ "$pid" = "${FM_FAKE_HARNESS_PID:-}" ] || exit 1
+    printf '%s\n' "$FM_FAKE_HARNESS_ETIME"
+    exit 0
+    ;;
 esac
 exit 1
 SH
   chmod +x "$fakebin/ps"
   printf '%s\n' "$harness" > "$fakebin/.harness-name"
+}
+
+set_mtime() {  # <epoch> <path>
+  local epoch=$1 path=$2 stamp
+  if stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null); then
+    touch -t "$stamp" "$path"
+  else
+    stamp=$(date -d "@$epoch" +%Y%m%d%H%M.%S)
+    touch -t "$stamp" "$path"
+  fi
+}
+
+# make_fake_agents_ctime <fakebin>: no userspace call can set a real inode
+# change time into the past, so a case that needs an AGENTS.md older than the
+# harness process sets FM_FAKE_AGENTS_CTIME; every other stat call reaches the
+# real stat.
+make_fake_agents_ctime() {
+  local fakebin=$1 real_stat
+  real_stat=$(PATH=$BASE_PATH command -v stat) || fail "no real stat on $BASE_PATH"
+  cat > "$fakebin/stat" <<SH
+#!/usr/bin/env bash
+if [ -n "\${FM_FAKE_AGENTS_CTIME:-}" ] && [ "\$#" -eq 4 ] && [ "\$1 \$2 \$3" = "-L -c %Z" ]; then
+  case "\$4" in */AGENTS.md) printf '%s\\n' "\$FM_FAKE_AGENTS_CTIME"; exit 0 ;; esac
+fi
+exec "$real_stat" "\$@"
+SH
+  chmod +x "$fakebin/stat"
 }
 
 make_fake_ps_pi_holder() {
@@ -1104,14 +1137,16 @@ EOF
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "working: step 7" "default status tail missing the most recent line"
-  assert_contains "$out" "working: step 3" "default status tail (5 lines) missing an expected recent line"
-  assert_not_contains "$out" "working: step 1" "default status tail (5 lines) leaked an older line"
+  assert_contains "$out" "working: step 5" "default status tail (3 lines) missing an expected recent line"
+  assert_not_contains "$out" "working: step 4" "default status tail (3 lines) leaked an older line"
+  assert_contains "$out" "status tail (last 3 line(s)," "the tail header does not disclose its line bound"
   assert_contains "$out" "$home/state/task-a.status" "digest did not print the full status log path for a deeper read"
   assert_contains "$out" "a bounded tail of every state/*.status" "read-once contract does not distinguish bounded status tails"
 
   out=$(FM_SESSION_START_STATUS_TAIL=2 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "working: step 7" "FM_SESSION_START_STATUS_TAIL=2 tail missing the most recent line"
   assert_not_contains "$out" "working: step 5" "FM_SESSION_START_STATUS_TAIL=2 did not bound the tail to 2 lines"
+  assert_contains "$out" "status tail (last 2 line(s)," "the overridden tail header does not disclose its line bound"
 
   pass "status tail is bounded to the configured line count, with the full log path always printed"
 }
@@ -1144,14 +1179,16 @@ EOF
   assert_contains "$out" "$lede" "the cap discarded the lede that carries the state word and decision key"
   assert_contains "$out" " [truncated]" "an over-long status line was not marked as truncated"
   assert_contains "$out" "working: short line kept whole" "the cap mangled a status line already under it"
-  assert_contains "$out" "each capped at 220 characters" "the status tail header does not disclose its per-line cap"
+  assert_contains "$out" "each capped at 140 characters" "the status tail header does not disclose its per-line cap"
   assert_contains "$out" "$home/state/task-cap.status" "a capped tail dropped the full log path that recovers the rest"
 
   # Nothing the tail emits may exceed the cap, and the padded line really was
   # long enough to exercise it.
   tail_section=$(printf '%s\n' "$out" | awk '/^status tail \(/ { flag = 1; next } flag && /^$/ { flag = 0 } flag')
   longest=$(printf '%s\n' "$tail_section" | awk '{ if (length($0) > max) max = length($0) } END { print max + 0 }')
-  [ "$longest" -le 220 ] || fail "a status tail line ran $longest characters past the 220-character cap"
+  [ "$longest" -le 140 ] || fail "a status tail line ran $longest characters past the 140-character cap"
+  capped=$(printf '%s\n' "$tail_section" | grep ' \[truncated\]$')
+  [ "${#capped}" -eq 140 ] || fail "the truncated tail line is ${#capped} characters, not exactly the 140-character cap: $capped"
   capped=$(printf '%s\n' "$tail_section" | grep -c ' \[truncated\]$')
   [ "$capped" -eq 1 ] || fail "expected exactly one truncated tail line, got $capped: $tail_section"
 
@@ -2167,6 +2204,8 @@ EOF
   compact_equal=$(FM_FAKE_HARNESS=pi run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
   assert_not_contains "$compact_equal" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
     "an unchanged AGENTS file was unnecessarily re-emitted"
+  assert_not_contains "$compact_equal" "FIRSTMATE_TEST_INSTRUCTION=original" \
+    "an unchanged AGENTS file's text was printed into the rebuild digest"
   [ "$(cat "$home/state/.session-start-agents-baseline")" = "$baseline" ] \
     || fail "a no-drift compact rewrote the true-start baseline"
 
@@ -2229,6 +2268,120 @@ $(hash_file_for_test "$root/AGENTS.md")" ] \
   pass "true-start AGENTS baselines stay immutable while every drifted Pi compact re-emits the current contract"
 }
 
+# A session whose own startup recorded no baseline - a manual or nudged start,
+# or a home whose baseline belongs to an earlier process - must not reprint an
+# unchanged AGENTS.md on every compaction. When AGENTS.md's inode last changed
+# before the harness process started, the session provably loaded those bytes,
+# so the rebuild silently records that start hash once.
+test_pi_compact_records_a_proven_start_hash_once() {
+  local rec root home fakebin out baseline now expected_hash
+  # The inode change time is faked by a stat on PATH; on Darwin the proof calls
+  # /usr/bin/stat directly, so the fake can never fire there.
+  if [ "$(uname)" = Darwin ]; then
+    pass "proven start-hash ctime injection is PATH-based; skipped on Darwin where stat is /usr/bin/stat"
+    return
+  fi
+  rec=$(new_world agents-proven-baseline)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" pi
+  make_fake_agents_ctime "$fakebin"
+  printf '%s\n' 'PROVEN_AGENTS=original' > "$root/AGENTS.md"
+  now=$(date +%s)
+  expected_hash=$(hash_file_for_test "$root/AGENTS.md")
+
+  # A full start without a native startup source records no baseline itself.
+  FM_FAKE_HARNESS=pi run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a start without the native startup source recorded a baseline"
+  printf 'earlier-process\n%s\n' "$expected_hash" > "$home/state/.session-start-agents-baseline"
+
+  # The process started after AGENTS.md's inode last changed: proven, recorded once.
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 FM_FAKE_AGENTS_CTIME=$((now - 7200)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_not_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "a provably unchanged AGENTS file was reprinted"
+  assert_not_contains "$out" "PROVEN_AGENTS=original" \
+    "a provably unchanged AGENTS file's text reached the rebuild digest"
+  assert_not_contains "$out" "AGENTS.md unchanged" \
+    "a provably unchanged AGENTS file printed a hash-match line instead of nothing"
+  baseline="$SESSION_START_TEST_HARNESS_PID
+$expected_hash"
+  [ "$(cat "$home/state/.session-start-agents-baseline")" = "$baseline" ] \
+    || fail "the proven start hash was not recorded for this lock owner"
+
+  # The recorded hash is immutable: a later edit refreshes on every compact,
+  # even when a start-preceding inode change would otherwise prove the bytes.
+  printf '%s\n' 'PROVEN_AGENTS=updated' > "$root/AGENTS.md"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 FM_FAKE_AGENTS_CTIME=$((now - 7200)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "an AGENTS edit after session start did not refresh"
+  assert_contains "$out" "PROVEN_AGENTS=updated" \
+    "the refresh did not print the complete current AGENTS content"
+  [ "$(cat "$home/state/.session-start-agents-baseline")" = "$baseline" ] \
+    || fail "a drifted compact replaced the owner's recorded start hash"
+
+  # An inode changed after the process started proves nothing: refresh, no record.
+  rm -f "$home/state/.session-start-agents-baseline"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 FM_FAKE_AGENTS_CTIME=$((now - 1800)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "PROVEN_AGENTS=updated" \
+    "an AGENTS file newer than the session was trusted as already loaded"
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a baseline was recorded without proof the session loaded the current bytes"
+
+  # Day-scale elapsed times parse: changed 2 days ago, started 1 day ago.
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=1-00:00:00 FM_FAKE_AGENTS_CTIME=$((now - 172800)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_not_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "a day-scale elapsed time did not prove the start hash"
+  [ "$(cat "$home/state/.session-start-agents-baseline")" = "$SESSION_START_TEST_HARNESS_PID
+$(hash_file_for_test "$root/AGENTS.md")" ] \
+    || fail "a day-scale elapsed time did not record the proven start hash"
+
+  # Changed 12 hours ago, started 1 day ago: newer than the session, no record.
+  rm -f "$home/state/.session-start-agents-baseline"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=1-00:00:00 FM_FAKE_AGENTS_CTIME=$((now - 43200)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "PROVEN_AGENTS=updated" \
+    "a day-scale elapsed time trusted an AGENTS file changed after the session began"
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a day-scale elapsed time recorded an unproven baseline"
+
+  # A restore that keeps an old mtime (cp -p, rsync -a, tar x) still changes the
+  # inode now, so the real ctime proves nothing: refresh, no record.
+  printf '%s\n' 'PROVEN_AGENTS=restored' > "$home/agents-backup.md"
+  set_mtime $((now - 7200)) "$home/agents-backup.md"
+  cp -p "$home/agents-backup.md" "$root/AGENTS.md"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "an AGENTS.md restored with a backdated mtime was trusted as already loaded"
+  assert_contains "$out" "PROVEN_AGENTS=restored" \
+    "the refresh after a backdated restore did not print the restored AGENTS content"
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a backdated mtime recorded an unproven baseline"
+
+  # A symlink swapped in mid-session can point at a file whose inode last
+  # changed before the session started, so the target's ctime proves nothing
+  # about the bytes the session loaded: refresh, no record.
+  printf '%s\n' 'PROVEN_AGENTS=symlinked' > "$home/agents-prestaged.md"
+  ln -sf "$home/agents-prestaged.md" "$root/AGENTS.md"
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_HARNESS_ETIME=01:00:00 FM_FAKE_AGENTS_CTIME=$((now - 7200)) \
+    run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
+  assert_contains "$out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "an AGENTS.md swapped for a symlink to an older file was trusted as already loaded"
+  assert_contains "$out" "PROVEN_AGENTS=symlinked" \
+    "the refresh after a symlink swap did not print the current AGENTS content"
+  assert_absent "$home/state/.session-start-agents-baseline" \
+    "a symlink swap recorded an unproven baseline"
+
+  pass "a Pi compact silently records a proven start hash once instead of reprinting an unchanged AGENTS.md"
+}
+
 test_read_only_pi_compact_refreshes_against_its_own_session_identity() {
   local rec root home fakebin holder_pid out baseline_before completion_before
   rec=$(new_world agents-refresh-read-only)
@@ -2237,6 +2390,7 @@ $rec
 EOF
   make_fake_toolchain "$fakebin"
   make_fake_ps_harness "$fakebin" pi
+  make_fake_agents_ctime "$fakebin"
   printf '%s\n' 'READ_ONLY_AGENTS=current' > "$root/AGENTS.md"
   FM_FAKE_HARNESS=pi run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --source startup >/dev/null
 
@@ -2248,7 +2402,8 @@ EOF
   baseline_before=$(cat "$home/state/.session-start-agents-baseline")
   completion_before=$(cat "$home/state/.session-start-complete")
 
-  out=$(FM_FAKE_HARNESS=pi FM_FAKE_LIVE_HOLDER_PID="$holder_pid" \
+  out=$(FM_FAKE_HARNESS=pi FM_FAKE_LIVE_HOLDER_PID="$holder_pid" FM_FAKE_HARNESS_ETIME=01:00:00 \
+    FM_FAKE_AGENTS_CTIME=$(($(date +%s) - 7200)) \
     run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH" --reemit --source compact)
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
@@ -2720,6 +2875,7 @@ test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact
+test_pi_compact_records_a_proven_start_hash_once
 test_read_only_pi_compact_refreshes_against_its_own_session_identity
 test_codex_unreachable_reset_sources_do_not_claim_instruction_refresh
 test_agents_baseline_requires_sha256_and_successful_completion
